@@ -1,0 +1,47 @@
+# keel-seo
+
+Reusable SEO plumbing for Keel projects — a **Landing registry** that is the single
+source of truth for the sitemap and the noindex-by-default gate, plus the critical-CSS
+generation engine. Extracted from SignalBots and neutralized: every project-specific
+piece is a config hook, not hardcoded.
+
+Read [`PLATFORM.md`](https://github.com/miladsafaei-me/keel-kit) (in keel-kit) for the
+platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
+
+## What it provides
+
+- `keel_seo.models.Landing` — the page registry (`title`, `url`, `is_indexable`).
+- `keel_seo.sitemaps.LandingSitemap` — sitemap of `is_indexable=True` rows, ordered by
+  structural section, with an optional host `lastmod` hook for dynamic-freshness pages.
+- `keel_seo.context_processors.landing` — injects the row for `request.path` (cached).
+- `keel_seo/templates/keel_seo/robots_meta.html` — the noindex-by-default `<meta>` gate.
+- `keel_seo.signals` — per-path cache invalidation on `Landing` change.
+- `keel_seo.admin_helpers.categorize_landing` — structural label for admin tables.
+- `keel_seo/tools/gen_critical_css.js` — the penthouse-based critical-CSS engine.
+
+## Consume it (host wiring)
+
+1. `pip install keel-seo` (or a git/editable install during development).
+2. Add `keel_seo` to `INSTALLED_APPS`.
+3. Add `keel_seo.context_processors.landing` to your `TEMPLATES` context processors.
+4. In the `<head>` of your base template: `{% include "keel_seo/robots_meta.html" %}`.
+5. Compose your sitemap: `{"landings": keel_seo.sitemaps.LandingSitemap, ...content sitemaps}`.
+6. Configure via `KEEL_SEO` (all optional — see `keel_seo/config.py`):
+   - `landing_db_table` — set to an existing table (e.g. `"core_landing"`) to adopt an
+     existing registry with only a metadata-level `AlterModelTable` migration.
+   - `cache_ttl` — per-path lookup cache TTL (default 300s).
+   - `lastmod_hook` — dotted path to `() -> {url: date}` for pages that genuinely change
+     often (e.g. a signals mirror's latest date per market URL). Default: none.
+
+## Config-contract / override seams (the rawification points)
+
+- **`lastmod_hook`** — the host owns any dynamic-freshness logic (it stays out of the
+  package; keel-seo is domain-neutral).
+- **critical-CSS manifest** — `gen_critical_css.js` expects a per-project `PAGES`/`CHROME`
+  manifest describing which URLs to process and the site chrome selectors. Supply it in
+  the host; the sibling `extract_critical_css.js` (broker/site-specific) stays in the host.
+
+## Status
+
+v0.1.0 — Python core extracted + neutralized; self-validated by compile + inspection.
+Live wiring into a host (migration + sitemap composition + parity) is the host's WIRE step.

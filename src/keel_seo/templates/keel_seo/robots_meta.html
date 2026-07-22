@@ -1,0 +1,7 @@
+{% comment %}
+keel-seo noindex-by-default gate. Include inside the <head> of a base template:
+    {% include "keel_seo/robots_meta.html" %}
+Requires keel_seo.context_processors.landing in TEMPLATES.OPTIONS.context_processors.
+A page is index,follow only when a Landing row exists for its exact path AND that
+row's is_indexable is True; otherwise it is noindex,nofollow.
+{% endcomment %}{% if landing and landing.is_indexable %}<meta name="robots" content="index, follow">{% else %}<meta name="robots" content="noindex, nofollow">{% endif %}
