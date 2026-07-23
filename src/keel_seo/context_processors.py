@@ -18,7 +18,19 @@ _MISS_SENTINEL = "__none__"
 
 def landing(request):
     key = f"landing:{request.path}"
-    cached = cache.get(key)
+    try:
+        cached = cache.get(key)
+    except Exception:
+        # A value cached under a previous model layout (e.g. the pre-extraction
+        # core.Landing) can't be unpickled once the model moves into keel_seo —
+        # cache.get raises LookupError deep in pickle. Treat it as a miss and
+        # drop the poison key rather than 500-ing every page through this
+        # processor. The DB re-query below rewrites it cleanly.
+        try:
+            cache.delete(key)
+        except Exception:
+            pass
+        cached = None
     if cached == _MISS_SENTINEL:
         return {"landing": None}
     if cached is not None:
