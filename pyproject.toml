@@ -4,13 +4,18 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keel-seo"
-version = "0.1.2"
-description = "Keel SEO — reusable Landing Registry, sitemap, noindex-by-default gate, and critical-CSS engine."
+version = "0.1.3"
+description = "Keel SEO — reusable Landing Registry, sitemap, noindex-by-default gate, critical-CSS engine, and a Google Search Console query registry."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Milad Safaei" }]
 license = { text = "UNLICENSED" }
 dependencies = ["Django>=4.2"]
+
+# The GSC query-intelligence CLI (keel_seo.gsc) is optional — a host that does not
+# pull Search Console data carries none of these. Install with: pip install 'keel-seo[gsc]'
+[project.optional-dependencies]
+gsc = ["google-api-python-client>=2.0", "google-auth>=2.0", "openpyxl>=3.0"]
 
 [project.urls]
 Homepage = "https://github.com/miladsafaei-me/keel-seo"

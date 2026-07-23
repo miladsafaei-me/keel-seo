@@ -41,6 +41,38 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
   manifest describing which URLs to process and the site chrome selectors. Supply it in
   the host; the sibling `extract_critical_css.js` (broker/site-specific) stays in the host.
 
+## GSC query intelligence (`keel_seo.gsc`, optional)
+
+A headless Google Search Console connector plus a persistent query registry — the
+generic half of a "what do we already rank for?" loop. Project-neutral: property,
+credentials, and storage dir are all runtime blanks.
+
+Install the extra (it pulls the Google client libs + openpyxl):
+
+```
+pip install 'keel-seo[gsc]'
+```
+
+Configure via env (Bucket-3 blanks):
+
+- `GSC_SITE` — the property, e.g. `sc-domain:example.com` (required; no default).
+- `GSC_CREDENTIALS` — service-account JSON key (default `~/.config/keel-seo/gsc-service-account.json`).
+- `GSC_DATA_DIR` — where the registry is stored (default `~/.local/share/keel-seo/gsc`).
+
+Use:
+
+```
+python -m keel_seo.gsc.connector sites          # connection test
+python -m keel_seo.gsc.registry sync            # pull the full query universe, merge
+python -m keel_seo.gsc.registry stats           # summary
+python -m keel_seo.gsc.registry xlsx            # formatted export
+```
+
+The registry writes `registry.json` (the store), `registry.csv`, and dated
+`snapshots/`. Turning those queries into *content ideas* — clustering against a
+scope vocabulary, market tagging, taxonomy — is host business logic and stays in
+the consuming project; this package owns only the neutral connector + registry.
+
 ## Status
 
 v0.1.0 — Python core extracted + neutralized; self-validated by compile + inspection.
