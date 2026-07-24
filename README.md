@@ -75,5 +75,6 @@ the consuming project; this package owns only the neutral connector + registry.
 
 ## Status
 
-v0.1.0 — Python core extracted + neutralized; self-validated by compile + inspection.
-Live wiring into a host (migration + sitemap composition + parity) is the host's WIRE step.
+v0.1.4 — extracted, neutralized, and consumed by SignalBots (its first host): the
+Landing table is adopted via the state-only `0001`, the sitemap is composed, the
+noindex-by-default gate is live, and the GSC query registry is in use.
