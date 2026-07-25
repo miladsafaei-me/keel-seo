@@ -7,6 +7,10 @@ key is optional and the defaults make the package work standalone:
         # Reuse an existing landing table so adoption needs no data migration
         # (only a metadata-level AlterModelTable). Omit for a fresh project.
         "landing_db_table": "core_landing",
+        # Set True ONLY when adopting a host's pre-existing landing table: the
+        # initial migration then records model state without emitting CREATE TABLE.
+        # Default False → a fresh project's initial migration creates the table.
+        "adopt_existing": True,
         # Per-path Landing lookup cache TTL (seconds).
         "cache_ttl": 300,
         # Dotted path to a callable returning {url: date} for pages whose content
@@ -20,6 +24,7 @@ from django.utils.module_loading import import_string
 
 _DEFAULTS = {
     "landing_db_table": "keel_seo_landing",
+    "adopt_existing": False,
     "cache_ttl": 300,
     "lastmod_hook": None,
 }
