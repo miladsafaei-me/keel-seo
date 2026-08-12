@@ -13,6 +13,10 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
 - `keel_seo.models.Landing` — the page registry (`title`, `url`, `is_indexable`).
 - `keel_seo.sitemaps.LandingSitemap` — sitemap of `is_indexable=True` rows, ordered by
   structural section, with an optional host `lastmod` hook for dynamic-freshness pages.
+- `keel_seo.sitemap_directory.directory_sitemap_urls` — re-groups any flat set of source
+  Sitemaps into **one sitemap per first URL path segment** (`/academy/... -> /academy.xml`)
+  under a `/sitemap.xml` index, plus a `/static-sitemap.xml` for root-level pages that live
+  in no routing directory (`/`, `/about`). Rebuilt from live DB state on every request.
 - `keel_seo.context_processors.landing` — injects the row for `request.path` (cached).
 - `keel_seo/templates/keel_seo/robots_meta.html` — the noindex-by-default `<meta>` gate.
 - `keel_seo.signals` — per-path cache invalidation on `Landing` change.
@@ -25,7 +29,12 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
 2. Add `keel_seo` to `INSTALLED_APPS`.
 3. Add `keel_seo.context_processors.landing` to your `TEMPLATES` context processors.
 4. In the `<head>` of your base template: `{% include "keel_seo/robots_meta.html" %}`.
-5. Compose your sitemap: `{"landings": keel_seo.sitemaps.LandingSitemap, ...content sitemaps}`.
+5. Compose your source sitemaps: `SITEMAPS = {"landings": LandingSitemap, ...content sitemaps}`,
+   then publish them directory-grouped in `urls.py`:
+   `urlpatterns = [*directory_sitemap_urls(SITEMAPS), ...]` (from `keel_seo.sitemap_directory`).
+   This serves `/sitemap.xml` (index), `/<segment>.xml` per routing directory, and
+   `/static-sitemap.xml`. `django.contrib.sitemaps` must be in `INSTALLED_APPS` (its
+   templates render the XML) and `Site.domain` must be the real domain.
 6. Configure via `KEEL_SEO` (all optional — see `keel_seo/config.py`):
    - `landing_db_table` — set to an existing table (e.g. `"core_landing"`) to adopt an
      existing registry with only a metadata-level `AlterModelTable` migration.

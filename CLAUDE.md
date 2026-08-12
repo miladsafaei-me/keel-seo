@@ -6,9 +6,11 @@ engine. English only; no banner comments; CSS variables only in any styling.
 
 ## Boundaries — what is here vs what stays in the host
 
-- **Here (generic):** the `Landing` model, `LandingSitemap`, the `landing` context
-  processor, the robots-meta partial, cache-invalidation signals, `categorize_landing`,
-  the `gen_critical_css.js` engine.
+- **Here (generic):** the `Landing` model, `LandingSitemap`, the directory-grouped
+  sitemap engine (`sitemap_directory.py`: `/sitemap.xml` index + one `/<segment>.xml`
+  per routing directory + `/static-sitemap.xml`), the `landing` context processor, the
+  robots-meta partial, cache-invalidation signals, `categorize_landing`, the
+  `gen_critical_css.js` engine.
 - **Stays in the host (Bucket-0):** any dynamic-freshness computation (wired via
   `KEEL_SEO["lastmod_hook"]`), the content sitemaps (blog/news/archives — those live in
   the content package), `extract_critical_css.js`, and the per-project critical-CSS
