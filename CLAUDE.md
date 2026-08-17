@@ -4,6 +4,10 @@ Part of the **Keel** platform (see keel-kit `PLATFORM.md`). This is a Bucket-2
 reusable Django app: the Landing registry + sitemap + noindex gate + critical-CSS
 engine. English only; no banner comments; CSS variables only in any styling.
 
+## Task tracking
+
+Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), not in chat memory. Every pending task — priority, prerequisites/dependencies, enough context to resume cold — goes there before starting new work; remove a task from TODO.md the moment it's done.
+
 ## Boundaries — what is here vs what stays in the host
 
 - **Here (generic):** the `Landing` model, `LandingSitemap`, the directory-grouped
