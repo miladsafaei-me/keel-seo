@@ -25,7 +25,9 @@ by itself once the directory grows past the threshold.
 Every section is rebuilt from live source state on each request — the source
 Sitemaps read the DB in ``items()``, and each source lists only indexable URLs —
 so publishing a page or toggling an indexability flag shows up on the next fetch.
-No cron, no cached file, no per-project sitemap code.
+No cron, no cached file, no per-project sitemap code. Sources are allowed to
+overlap: a URL listed by more than one of them is emitted once, carrying the
+newest ``lastmod`` any of them reported.
 
 Wiring (host ``urls.py``)::
 
@@ -92,10 +94,17 @@ def _path_parts(location):
 
 
 def _collect(request, source_sitemaps):
-    """All URL dicts from every source Sitemap, absolute for this request."""
+    """All URL dicts from every source Sitemap, absolute for this request.
+
+    Deduplicated by location. Sources overlap by design — a host that seeds a
+    Landing row per blog post has that post in both ``LandingSitemap`` and the
+    content package's blog bucket — and emitting the same ``<loc>`` twice is a
+    defect in the sitemap, not extra coverage. First source wins the entry; the
+    newest ``lastmod`` any source reports for that URL is kept.
+    """
     req_site = get_current_site(request)
     protocol = request.scheme
-    entries = []
+    by_location = {}
     for src in source_sitemaps.values():
         smap = src() if callable(src) else src
         try:
@@ -104,12 +113,18 @@ def _collect(request, source_sitemaps):
             num_pages = 1
         for page in range(1, num_pages + 1):
             try:
-                entries.extend(
-                    smap.get_urls(page=page, site=req_site, protocol=protocol)
-                )
+                page_urls = smap.get_urls(page=page, site=req_site, protocol=protocol)
             except Exception:
                 break
-    return entries
+            for entry in page_urls:
+                seen = by_location.get(entry["location"])
+                if seen is None:
+                    by_location[entry["location"]] = entry
+                    continue
+                lastmod, seen_lastmod = entry.get("lastmod"), seen.get("lastmod")
+                if lastmod and (not seen_lastmod or lastmod > seen_lastmod):
+                    seen["lastmod"] = lastmod
+    return list(by_location.values())
 
 
 def _grouped(request, source_sitemaps):

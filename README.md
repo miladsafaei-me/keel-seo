@@ -45,6 +45,9 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
      before the index links its own `/<segment>.xml`. Thinner directories keep their
      URLs (folded into `/static-sitemap.xml`) but get no section file. Default 2.
 
+   Sources may overlap freely — a URL that several of them list is emitted once,
+   carrying the newest `lastmod` any source reported for it.
+
 ## Config-contract / override seams (the rawification points)
 
 - **`lastmod_hook`** — the host owns any dynamic-freshness logic (it stays out of the
