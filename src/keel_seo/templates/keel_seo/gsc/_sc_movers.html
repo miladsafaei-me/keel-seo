@@ -1,0 +1,22 @@
+{% load humanize %}{% comment %} Movers group: expects `title`, `group` (gainers/losers), optional `strip` (domain to trim off page URLs). {% endcomment %}
+<div class="sc-movers">
+  <p class="sc-movers__title">{{ title }}</p>
+  <div class="sc-movers__cols">
+    <div>
+      <p class="sc-movers__head sc-movers__head--up">Gaining</p>
+      <ul class="sc-movers__list">
+        {% for r in group.gainers %}
+        <li class="sc-movers__row"><span class="sc-movers__key" title="{{ r.key }}">{{ r.key|cut:strip }}</span><span class="sc-delta sc-delta--up">▲ {{ r.delta|intcomma }}</span></li>
+        {% empty %}<li class="sc-movers__empty">No gains this period</li>{% endfor %}
+      </ul>
+    </div>
+    <div>
+      <p class="sc-movers__head sc-movers__head--down">Declining</p>
+      <ul class="sc-movers__list">
+        {% for r in group.losers %}
+        <li class="sc-movers__row"><span class="sc-movers__key" title="{{ r.key }}">{{ r.key|cut:strip }}</span><span class="sc-delta sc-delta--down">▼ {{ r.delta|intcomma|cut:"-" }}</span></li>
+        {% empty %}<li class="sc-movers__empty">No declines this period</li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,985 @@
+{% extends gsc_base_template %}
+{% load keel_seo_icons humanize static %}
+
+{% block title %}Search Console{% endblock %}
+{% block page_pretitle %}SEO{% endblock %}
+{% block page_title %}Search Console{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'keel_seo/gsc/search_console.css' %}">
+{% endblock %}
+
+{% block content %}
+{% if not sc_has_data %}
+  <div class="rounded-2xl border border-warning-200 bg-warning-50 p-6 text-sm text-warning-700 dark:border-warning-500/30 dark:bg-warning-500/10 dark:text-warning-300">
+    No dashboard data yet. Run <code class="font-mono">keel_seo.gsc.registry sync</code> then
+    <code class="font-mono">tools/gsc/export_dashboard.py</code> and redeploy.
+  </div>
+{% else %}
+<span id="sc-csrf" hidden>{% csrf_token %}</span>
+<div id="sc-root" x-data="scDashboard()"
+     data-dismiss-url="{% url 'keel_seo_gsc:dismiss' %}"
+     data-restore-url="{% url 'keel_seo_gsc:restore' %}"
+     data-queue-url="{% url 'keel_seo_gsc:queue' %}"
+     data-exclude-url="{% url 'keel_seo_gsc:dedicated_exclude' %}"
+     data-dedicated-queue-url="{% url 'keel_seo_gsc:dedicated_queue' %}"
+     data-cluster-queue-url="{% url 'keel_seo_gsc:cluster_queue' %}"
+     data-cluster-exclude-url="{% url 'keel_seo_gsc:cluster_exclude' %}"
+     data-site-base="{{ sc_site_base }}"
+     data-window="{{ sc_range.window|default:'' }}"
+     data-start="{{ sc_range.start|default:'' }}"
+     data-end="{{ sc_range.end|default:'' }}">
+
+<div x-show="tip.show" x-cloak x-transition.opacity.duration.150ms
+     :style="`left:${tip.x}px; top:${tip.y}px`"
+     class="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-full rounded-lg bg-gray-900/90 px-2.5 py-1.5 text-xs font-medium text-white shadow-lg dark:bg-gray-700"
+     x-text="tip.text"></div>
+
+{% if sc_live_failed %}
+{% comment %} Live pull failed — the reader is looking at an older committed snapshot. {% endcomment %}
+<div class="mb-6 flex items-start gap-2.5 rounded-2xl border border-warning-200 bg-warning-50 p-4 text-sm text-warning-700 dark:border-warning-500/30 dark:bg-warning-500/10 dark:text-warning-300">
+  {% icon "alert-triangle" class="mt-0.5 h-4 w-4 shrink-0" %}
+  <div>
+    <p class="font-semibold">Showing a saved snapshot</p>
+    <p class="mt-0.5 text-xs">The live Search Console pull didn't complete, so this is the last committed snapshot rather than fresh data. Reload to retry; if it persists, check the service-account key and <code class="font-mono">GSC_LIVE</code>.</p>
+  </div>
+</div>
+{% endif %}
+
+{% comment %} ---- In-page section nav ---- {% endcomment %}
+<nav id="sc-nav" aria-label="Dashboard sections" class="sc-nav">
+  <a href="#sc-overview" class="sc-nav__link">Overview</a>
+  <a href="#sc-opportunities" class="sc-nav__link">Opportunities</a>
+  <a href="#sc-structure" class="sc-nav__link">Site structure</a>
+  <a href="#sc-actions" class="sc-nav__link">Actions</a>
+</nav>
+
+{% comment %} ---- Date-range picker: preset windows + a custom calendar ---- {% endcomment %}
+<section id="sc-range" class="mb-8" x-data="scRangePicker()">
+  <div class="relative flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white p-3.5 dark:border-gray-800 dark:bg-white/[0.03] sm:flex-row sm:items-center sm:justify-between">
+    <div class="flex items-center gap-3 pl-0.5">
+      <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gsc-p3/15 text-gsc-p3">{% icon "calendar" class="h-5 w-5" %}</span>
+      <div>
+        <p class="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Showing data for</p>
+        <p class="text-sm font-semibold text-gray-800 dark:text-white/90">{{ sc_range.label }}{% if sc_range.live %}<span class="ml-2 align-middle rounded-full bg-gsc-p3/15 px-2 py-0.5 text-[11px] font-semibold text-gsc-p3">live</span>{% else %}<span class="ml-2 align-middle rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-500 dark:bg-gray-800 dark:text-gray-400">snapshot</span>{% endif %}</p>
+        {% if sc_range.snapped_from %}<p class="text-[11px] text-gray-400 dark:text-gray-500">nearest window covering {{ sc_range.snapped_from }}</p>{% endif %}
+      </div>
+    </div>
+    <div class="flex flex-wrap items-center gap-1.5">
+      {% for w in sc_windows %}
+        <a href="?window={{ w.key }}" @click="hold('{{ w.label|escapejs }}')"
+           class="sc-pill{% if w.active %} sc-pill--active{% endif %}">{{ w.label }}</a>
+      {% endfor %}
+      <button type="button" class="sc-pill sc-pill--cal" :class="open && 'sc-pill--active'"
+              @click="toggle()" aria-haspopup="dialog" :aria-expanded="open.toString()">
+        {% icon "calendar" class="h-4 w-4" %}<span>Custom</span>
+      </button>
+    </div>
+
+    {% comment %} Custom-range calendar popover {% endcomment %}
+    <div x-show="open" x-cloak @click.outside="open=false"
+         x-transition:enter="transition ease-out duration-150"
+         x-transition:enter-start="opacity-0 -translate-y-1" x-transition:enter-end="opacity-100 translate-y-0"
+         class="sc-cal" role="dialog" aria-label="Pick a custom date range">
+      <div class="sc-cal__head">
+        <button type="button" class="sc-cal__nav" @click="shift(-1)" aria-label="Previous month">{% icon "chevron-left" class="h-4 w-4" %}</button>
+        <span class="sc-cal__title" x-text="monthTitle"></span>
+        <button type="button" class="sc-cal__nav" @click="shift(1)" :disabled="atMaxMonth" aria-label="Next month">{% icon "chevron-right" class="h-4 w-4" %}</button>
+      </div>
+      <div class="sc-cal__grid sc-cal__dow">
+        <template x-for="(d, i) in ['S','M','T','W','T','F','S']" :key="i"><span class="sc-cal__dowcell" x-text="d"></span></template>
+      </div>
+      <div class="sc-cal__grid" @mouseleave="hover=null">
+        <template x-for="cell in cells" :key="cell.key">
+          <button type="button" class="sc-cal__day" :class="cell.cls" :disabled="cell.disabled"
+                  x-text="cell.day" @click="pick(cell.iso)" @mouseenter="hover=cell.iso"></button>
+        </template>
+      </div>
+      <div class="sc-cal__foot">
+        <span class="sc-cal__range" x-text="footLabel"></span>
+        <div class="sc-cal__actions">
+          <button type="button" class="sc-cal__btn" @click="reset()">Clear</button>
+          <button type="button" class="sc-cal__btn sc-cal__btn--go" :disabled="!(start && end)" @click="apply()">Apply range</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% comment %} Loading overlay — shown while a range change navigates + renders (live pulls take a few seconds) {% endcomment %}
+  <div x-show="loading" x-cloak
+       x-transition:enter="transition ease-out duration-150" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+       class="sc-loading" role="status" aria-live="polite">
+    <div class="sc-loading__card">
+      <div class="sc-loading__head">
+        <span class="sc-loading__dot"></span>
+        <p class="sc-loading__title">Loading Search Console data…</p>
+      </div>
+      <div class="sc-loading__track"><span class="sc-loading__fill"></span></div>
+      <p class="sc-loading__hint" x-text="loadingLabel"></p>
+    </div>
+  </div>
+</section>
+
+{% comment %} ============================ OVERVIEW ============================ {% endcomment %}
+<div id="sc-overview" class="sc-section">
+
+{% if sc_timeseries %}
+{% comment %} ---- Performance — GSC-style metric toggles over a daily line chart ---- {% endcomment %}
+<section class="mb-8">
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+    {{ sc_perf_charts|json_script:"sc-perf-charts" }}
+    {{ sc_perf_dirs|json_script:"sc-perf-dirs" }}
+    <div x-data="scPerformance('sc-perf-charts','sc-perf-dirs')" class="sc-perf">
+      <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="text-base font-semibold text-gray-800 dark:text-white/90">Performance</h2>
+          <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ sc_range.label }} — click a metric to show or hide it; filter by URL directory.</p>
+        </div>
+        <label class="sc-perf__dirwrap">
+          <span class="sc-perf__dirlbl">Directory</span>
+          <select class="sc-perf__dir" x-model="$store.perf.dir" aria-label="Filter the chart by URL directory">
+            <template x-for="d in dirs" :key="d.slug"><option :value="d.slug" x-text="d.label"></option></template>
+          </select>
+        </label>
+      </div>
+
+      {% comment %} Metric selector boxes — each toggles its line on the chart {% endcomment %}
+      <div class="sc-perf__boxes" role="group" aria-label="Toggle chart metrics">
+        <template x-for="m in metrics" :key="m.key">
+          <button type="button" class="sc-perf__box"
+                  :class="`sc-perf__box--${m.color}` + (active.includes(m.key) ? ' is-on' : '')"
+                  :aria-pressed="active.includes(m.key)" @click="toggle(m.key)">
+            <span class="sc-perf__top">
+              <span class="sc-perf__chk" aria-hidden="true">
+                <svg viewBox="0 0 16 16" class="sc-perf__chkmark"><path d="M13 4.5 6.5 11 3 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+              <span class="sc-perf__lbl" x-text="m.label"></span>
+            </span>
+            <span class="sc-perf__val" x-text="m.total"></span>
+          </button>
+        </template>
+      </div>
+
+      <div class="sc-tl">
+        <div class="sc-tl__plot">
+          <div class="sc-tl__yl" :class="leftAxClass">
+            <template x-for="(t, ti) in leftTicks" :key="'l'+ti"><span class="sc-tl__ytick" :style="`top:${t.y}px`" x-text="t.label"></span></template>
+          </div>
+          <div class="sc-tl__yr" :class="rightAxClass">
+            <template x-for="(t, ti) in rightTicks" :key="'r'+ti"><span class="sc-tl__ytick sc-tl__ytick--r" :style="`top:${t.y}px`" x-text="t.label"></span></template>
+          </div>
+          <svg x-ref="svg" class="sc-tl__svg" viewBox="0 0 {{ sc_timeseries.w }} {{ sc_timeseries.h }}" preserveAspectRatio="none"
+               @mousemove="move($event)" @mouseleave="leave()" role="img" aria-label="Search performance over time">
+            {% for g in sc_timeseries.grid %}<line x1="0" x2="{{ sc_timeseries.w }}" y1="{{ g.y }}" y2="{{ g.y }}" class="sc-tl__grid"/>{% endfor %}
+            <rect x="0" y="0" width="{{ sc_timeseries.w }}" height="{{ sc_timeseries.h }}" fill="transparent"></rect>
+            {% comment %} Four fixed <path>/<circle> per metric, :d/:cy bound so the
+            directory dropdown re-plots client-side. They are hard-coded (not an Alpine
+            <template x-for>) because cloning a <template> inside <svg> makes HTML-namespace
+            nodes the browser never paints — the bug that left the chart blank. {% endcomment %}
+            <path :d="pathFor('clicks')" x-show="active.includes('clicks')" class="sc-tl__line sc-tl__line--clicks" fill="none" vector-effect="non-scaling-stroke"/>
+            <path :d="pathFor('impressions')" x-show="active.includes('impressions')" class="sc-tl__line sc-tl__line--impr" fill="none" vector-effect="non-scaling-stroke"/>
+            <path :d="pathFor('ctr')" x-show="active.includes('ctr')" class="sc-tl__line sc-tl__line--ctr" fill="none" vector-effect="non-scaling-stroke"/>
+            <path :d="pathFor('position')" x-show="active.includes('position')" class="sc-tl__line sc-tl__line--pos" fill="none" vector-effect="non-scaling-stroke"/>
+            <line x1="0" x2="0" y1="0" y2="{{ sc_timeseries.h }}" class="sc-tl__cursor" :class="hover.show || 'is-hidden'" :x1="cur.x" :x2="cur.x"/>
+            <circle r="5" class="sc-tl__pt sc-tl__pt--clicks" :class="(hover.show && active.includes('clicks') && cur.y_clicks != null) ? '' : 'is-hidden'" :cx="cur.x" :cy="cur.y_clicks || 0"/>
+            <circle r="5" class="sc-tl__pt sc-tl__pt--impr" :class="(hover.show && active.includes('impressions') && cur.y_impr != null) ? '' : 'is-hidden'" :cx="cur.x" :cy="cur.y_impr || 0"/>
+            <circle r="5" class="sc-tl__pt sc-tl__pt--ctr" :class="(hover.show && active.includes('ctr') && cur.y_ctr != null) ? '' : 'is-hidden'" :cx="cur.x" :cy="cur.y_ctr || 0"/>
+            <circle r="5" class="sc-tl__pt sc-tl__pt--pos" :class="(hover.show && active.includes('position') && cur.y_pos != null) ? '' : 'is-hidden'" :cx="cur.x" :cy="cur.y_pos || 0"/>
+          </svg>
+        </div>
+        <div class="sc-tl__xl">
+          {% for x in sc_timeseries.xticks %}<span class="sc-tl__xtick" style="left:{{ x.pct }}%">{{ x.label }}</span>{% endfor %}
+        </div>
+        <div x-show="hover.show" x-cloak class="sc-tl__tip" :style="`left:${hover.mx}px; top:${hover.my}px`">
+          <p class="sc-tl__tipdate" x-text="fmtDate(cur.date)"></p>
+          <template x-for="m in metrics" :key="'t'+m.key">
+            <div class="sc-tl__tiprow" x-show="active.includes(m.key)">
+              <span class="sc-tl__sw" :class="`sc-tl__sw--${m.color}`"></span>
+              <span class="sc-tl__tiplbl" x-text="m.label"></span>
+              <b class="sc-tl__tipval" x-text="tipVal(m)"></b>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% comment %} ---- Ranking pages — sits under the chart, filtered by the Directory dropdown ---- {% endcomment %}
+{{ sc_top_pages|json_script:"tbl-pages" }}
+<section class="mb-8" x-data="{open:true}">
+  <div x-data="scTable('tbl-pages', 15, true)" x-effect="$store.perf.dir; page = 1"
+       class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] sc-acc lg:p-6" :class="open && 'is-open'">
+    <div class="mb-3 flex items-center justify-between cursor-pointer" @click="open=!open" role="button" :aria-expanded="open.toString()">
+      <h4 class="flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-white/90">{% icon "world-www" class="h-4 w-4 text-gsc-p1" %}Ranking pages<span x-show="$store.perf.dir !== 'all'" class="rounded-full bg-gsc-p1/15 px-2 py-0.5 text-xs font-semibold text-gray-600 dark:text-gray-300" x-text="$store.perf.dir === '(home)' ? 'Home' : '/' + $store.perf.dir"></span></h4>
+      <span class="text-xs text-gray-500 dark:text-gray-400" x-text="fmt(total)"></span>
+    <span class="sc-acc__chev">{% icon "chevron-right" class="h-4 w-4" %}</span></div><div class="sc-acc__body"><div class="sc-acc__inner">
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-left text-sm">
+        <thead class="text-xs uppercase tracking-wider text-gray-400 dark:text-gray-500">
+          <tr class="border-b border-gray-100 dark:border-gray-800">
+            <th class="py-2 pr-4 font-medium">Page</th>
+            {% include "keel_seo/gsc/_sc_sort_th.html" with label="Clk" key="clicks" align="right" %}
+            {% include "keel_seo/gsc/_sc_sort_th.html" with label="Impr" key="impressions" align="right" %}
+            {% include "keel_seo/gsc/_sc_sort_th.html" with label="CTR" key="ctr" align="right" %}
+            {% include "keel_seo/gsc/_sc_sort_th.html" with label="Pos" key="position" align="right" %}
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+          <template x-for="r in view" :key="r.page">
+            <tr class="text-gray-700 dark:text-gray-300">
+              <td class="py-2 pr-4 font-mono text-xs"><a :href="r.page" target="_blank" rel="noopener" class="text-gsc-p1 hover:underline" x-text="r.page.replace(SC_SITE_BASE,'') || '/'"></a></td>
+              <td class="py-2 pr-4 text-right tabular-nums" x-text="fmt(r.clicks)"></td>
+              <td class="py-2 pr-4 text-right tabular-nums" x-text="fmt(r.impressions)"></td>
+              <td class="py-2 pr-4 text-right tabular-nums"><span x-text="r.ctr"></span>%</td>
+              <td class="py-2 text-right tabular-nums" x-text="r.position"></td>
+            </tr>
+          </template>
+          <tr x-show="!view.length"><td colspan="5" class="py-4 text-center text-xs text-gray-400 dark:text-gray-500">No pages in this directory for the selected range.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    {% include "keel_seo/gsc/_sc_pager.html" %}
+  </div></div></div>
+</section>
+
+{% comment %} ---- KPI tiles ---- {% endcomment %}
+<section class="mb-8">
+  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+      <div class="flex items-center justify-between">
+        <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-gsc-p3/15 text-gsc-p3">{% icon "search" class="h-5 w-5" %}</span>
+        <div class="flex items-center gap-1.5">
+          {% if sc_totals.new_queries %}<span class="inline-flex items-center gap-1 rounded-full bg-gsc-p3/15 px-2 py-0.5 text-xs font-semibold text-gray-600 dark:text-gray-300">+{{ sc_totals.new_queries|intcomma }} new</span>{% endif %}
+          {% include "keel_seo/gsc/_sc_delta.html" with d=sc_kpi_deltas.queries %}
+        </div>
+      </div>
+      <p class="mt-4 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Total keywords</p>
+      <h3 class="mt-1 text-title-sm font-bold text-gray-800 dark:text-white/90">{{ sc_totals.queries|intcomma }}</h3>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Unique queries we appear for</p>
+    </div>
+    <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+      <div class="flex items-center justify-between">
+        <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-gsc-p1/15 text-gsc-p1">{% icon "trending-up" class="h-5 w-5" %}</span>
+        {% include "keel_seo/gsc/_sc_delta.html" with d=sc_kpi_deltas.clicks %}
+      </div>
+      <p class="mt-4 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Clicks</p>
+      <h3 class="mt-1 text-title-sm font-bold text-gray-800 dark:text-white/90">{{ sc_totals.clicks|intcomma }}</h3>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ sc_range.label }}</p>
+    </div>
+    <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+      <div class="flex items-center justify-between">
+        <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-gsc-p2/15 text-gsc-p2">{% icon "eye" class="h-5 w-5" %}</span>
+        {% include "keel_seo/gsc/_sc_delta.html" with d=sc_kpi_deltas.impressions %}
+      </div>
+      <p class="mt-4 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Impressions</p>
+      <h3 class="mt-1 text-title-sm font-bold text-gray-800 dark:text-white/90">{{ sc_totals.impressions|intcomma }}</h3>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Times we surfaced in results</p>
+    </div>
+    <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+      <div class="flex items-center justify-between">
+        <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-gsc-p4/15 text-gsc-p4">{% icon "world-www" class="h-5 w-5" %}</span>
+        {% include "keel_seo/gsc/_sc_delta.html" with d=sc_kpi_deltas.pages %}
+      </div>
+      <p class="mt-4 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Ranking pages</p>
+      <h3 class="mt-1 text-title-sm font-bold text-gray-800 dark:text-white/90">{{ sc_totals.pages|intcomma }}</h3>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Distinct URLs drawing impressions</p>
+    </div>
+  </div>
+</section>
+
+{% if sc_movers %}
+{% comment %} ---- Movers — biggest click gainers / losers vs previous period ---- {% endcomment %}
+<section class="mb-8">
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+    <div class="mb-4">
+      <h2 class="text-base font-semibold text-gray-800 dark:text-white/90">Movers</h2>
+      <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Biggest click changes vs the previous {{ sc_range.days }}-day period</p>
+    </div>
+    <div class="grid gap-8 lg:grid-cols-2">
+      {% include "keel_seo/gsc/_sc_movers.html" with title="Queries" group=sc_movers.queries strip="" %}
+      {% include "keel_seo/gsc/_sc_movers.html" with title="Pages" group=sc_movers.pages strip=sc_site_base %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+</div>{% comment %} /#sc-overview {% endcomment %}
+
+{% comment %} ========================= OPPORTUNITIES ========================= {% endcomment %}
+<div id="sc-opportunities" class="sc-section">
+<h2 class="sc-sechead">{% icon "target" class="h-4 w-4 text-gsc-p4" %}Opportunities</h2>
+
+{% if sc_cannibalization or sc_ctr_underperformers %}
+{% comment %} ---- cannibalization + CTR underperformers ---- {% endcomment %}
+<section class="mb-8">
+  <div class="grid gap-6 lg:grid-cols-2">
+    {% if sc_cannibalization %}
+    <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+      <div class="flex items-center justify-between">
+        <h4 class="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-white/90">{% icon "arrows-exchange" class="h-4 w-4 text-gsc-p4" %}Cannibalization</h4>
+        <span class="rounded-full bg-gsc-p4/15 px-2 py-0.5 text-xs font-semibold text-gray-600 dark:text-gray-300">{{ sc_cannibalization_count }}</span>
+      </div>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Queries several of our URLs compete for — Google splits the signal. Consolidate or set a clear canonical.</p>
+      <div class="mt-4 space-y-2">
+        {% for r in sc_cannibalization|slice:":12" %}
+        <details class="sc-cannibal">
+          <summary class="sc-cannibal__sum">
+            <span class="sc-cannibal__q" title="{{ r.query }}">{{ r.query }}</span>
+            <span class="sc-cannibal__meta">{{ r.n_pages }} pages · {{ r.impressions|intcomma }} impr</span>
+          </summary>
+          <ul class="sc-cannibal__pages">
+            {% for p in r.pages %}
+            <li><a href="{{ p.page }}" target="_blank" rel="noopener nofollow" class="sc-cannibal__url" title="{{ p.page }}">{{ p.page|cut:sc_site_base }}</a><span class="sc-cannibal__pm">pos {{ p.position }} · {{ p.impressions|intcomma }} impr · {{ p.clicks|intcomma }} clk</span></li>
+            {% endfor %}
+          </ul>
+        </details>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if sc_ctr_underperformers %}
+    <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+      <h4 class="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-white/90">{% icon "eye" class="h-4 w-4 text-gsc-p2" %}Ranking but not clicked</h4>
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Page-1 queries earning far fewer clicks than their rank predicts — a title / meta / SERP-feature fix, ranked by clicks left on the table.</p>
+      <div class="mt-3 overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="border-b border-gray-100 text-left text-gray-400 dark:border-gray-800 dark:text-gray-500">
+              <th class="py-1.5 pr-2 font-medium">Query</th>
+              <th class="px-2 py-1.5 text-right font-medium">Pos</th>
+              <th class="px-2 py-1.5 text-right font-medium">CTR</th>
+              <th class="px-2 py-1.5 text-right font-medium">Exp.</th>
+              <th class="py-1.5 pl-2 text-right font-medium">Lost clk</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for u in sc_ctr_underperformers|slice:":12" %}
+            <tr class="border-b border-gray-50 dark:border-gray-800/60">
+              <td class="max-w-0 truncate py-1.5 pr-2 text-gray-700 dark:text-gray-300" title="{{ u.query }}">{{ u.query }}</td>
+              <td class="px-2 py-1.5 text-right tabular-nums text-gray-500 dark:text-gray-400">{{ u.position }}</td>
+              <td class="px-2 py-1.5 text-right tabular-nums text-gray-600 dark:text-gray-300">{{ u.ctr }}%</td>
+              <td class="px-2 py-1.5 text-right tabular-nums text-gray-400 dark:text-gray-500">{{ u.expected_ctr }}%</td>
+              <td class="py-1.5 pl-2 text-right tabular-nums font-semibold text-gray-700 dark:text-gray-200">{{ u.gap|floatformat:0 }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+
+{% comment %} ---- High impressions, low clicks — one card, grouped by query / cluster / page ---- {% endcomment %}
+{{ sc_high_impr_low_click|json_script:"tbl-hilc" }}
+{{ sc_hilc_by_cluster|json_script:"tbl-hilc-cl" }}
+{{ sc_hilc_by_page|json_script:"tbl-hilc-pg" }}
+<section class="mb-8" x-data="scTabs('query')">
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h4 class="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-white/90">{% icon "eye" class="h-4 w-4 text-gsc-p5" %}High impressions, low clicks</h4>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Demand we surface for but rarely earn the click (impressions ≥ {{ sc_thresholds.high_impr_min }}, CTR &lt; {{ sc_thresholds.low_ctr_max_pct }}%). Group it by query, keyword cluster, or the page it lands on.</p>
+      </div>
+      <div class="sc-seg" role="tablist" aria-label="Group high-impression low-click demand by">
+        <button type="button" class="sc-seg__btn" :class="is('query') && 'is-on'" @click="set('query')" :aria-selected="is('query')">Query</button>
+        <button type="button" class="sc-seg__btn" :class="is('cluster') && 'is-on'" @click="set('cluster')" :aria-selected="is('cluster')">Cluster</button>
+        <button type="button" class="sc-seg__btn" :class="is('page') && 'is-on'" @click="set('page')" :aria-selected="is('page')">Page</button>
+      </div>
+    </div>
+
+    {% comment %} by query {% endcomment %}
+    <div x-show="is('query')">
+      <div x-data="scTable('tbl-hilc', 15)">
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-left text-sm">
+            <thead class="text-xs uppercase tracking-wider text-gray-400 dark:text-gray-500">
+              <tr class="border-b border-gray-100 dark:border-gray-800">
+                <th class="py-2 pr-4 font-medium">Query</th>
+                <th class="py-2 pr-4 font-medium">Cluster</th>
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Impressions" key="impressions" %}
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Clk" key="clicks" align="right" %}
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="CTR" key="ctr" align="right" %}
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Position" key="position" %}
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+              <template x-for="r in view" :key="r.query">
+                <tr class="text-gray-700 dark:text-gray-300">
+                  <td class="py-2 pr-4 font-mono text-xs" x-text="r.query"></td>
+                  <td class="py-2 pr-4"><span class="whitespace-nowrap rounded-md bg-gsc-p1/15 px-2 py-0.5 text-xs font-medium text-gray-600 dark:text-gray-300" x-text="r.cluster"></span></td>
+                  <td class="py-2 pr-4">
+                    <div class="flex items-center gap-2">
+                      <div class="h-1.5 w-20 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+                        <div class="h-full rounded-full bg-gsc-p1" :class="'w-'+r.impr_width_12+'/12'"></div>
+                      </div>
+                      <span class="text-xs tabular-nums" x-text="fmt(r.impressions)"></span>
+                    </div>
+                  </td>
+                  <td class="py-2 pr-4 text-right tabular-nums" x-text="r.clicks"></td>
+                  <td class="py-2 pr-4 text-right tabular-nums"><span x-text="r.ctr"></span>%</td>
+                  <td class="py-2">
+                    <span class="rounded-full px-2 py-0.5 text-xs font-medium" :class="r.pos_tone==='good' ? 'bg-success-50 text-success-600 dark:bg-success-500/15 dark:text-success-300' : (r.pos_tone==='warn' ? 'bg-warning-50 text-warning-600 dark:bg-warning-500/15 dark:text-warning-300' : 'bg-error-50 text-error-600 dark:bg-error-500/15 dark:text-error-300')">pos <span x-text="r.position"></span></span>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+        {% include "keel_seo/gsc/_sc_pager.html" %}
+      </div>
+    </div>
+
+    {% comment %} by cluster {% endcomment %}
+    <div x-show="is('cluster')" x-cloak>
+      <div x-data="scTable('tbl-hilc-cl', 15)">
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-left text-sm">
+            <thead class="text-xs uppercase tracking-wider text-gray-400 dark:text-gray-500">
+              <tr class="border-b border-gray-100 dark:border-gray-800">
+                <th class="py-2 pr-4 font-medium">Cluster</th>
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Kw" key="keywords" align="right" %}
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Impr" key="impressions" align="right" %}
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Clk" key="clicks" align="right" %}
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="CTR" key="ctr" align="right" %}
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+              <template x-for="r in view" :key="r.cluster">
+                <tr class="text-gray-700 dark:text-gray-300">
+                  <td class="py-2 pr-4 font-mono text-xs" x-text="r.cluster"></td>
+                  <td class="py-2 pr-4 text-right tabular-nums" x-text="r.keywords"></td>
+                  <td class="py-2 pr-4 text-right tabular-nums" x-text="fmt(r.impressions)"></td>
+                  <td class="py-2 pr-4 text-right tabular-nums" x-text="fmt(r.clicks)"></td>
+                  <td class="py-2 text-right tabular-nums"><span x-text="r.ctr"></span>%</td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+        {% include "keel_seo/gsc/_sc_pager.html" %}
+      </div>
+    </div>
+
+    {% comment %} by page {% endcomment %}
+    <div x-show="is('page')" x-cloak>
+      <div x-data="scTable('tbl-hilc-pg', 15)">
+        <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">Pages that surface a lot but capture few clicks (impressions ≥ {{ sc_thresholds.page_high_impr_min }}, CTR &lt; {{ sc_thresholds.page_low_ctr_max_pct }}%).</p>
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-left text-sm">
+            <thead class="text-xs uppercase tracking-wider text-gray-400 dark:text-gray-500">
+              <tr class="border-b border-gray-100 dark:border-gray-800">
+                <th class="py-2 pr-4 font-medium">Page</th>
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Impr" key="impressions" align="right" %}
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Clk" key="clicks" align="right" %}
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="CTR" key="ctr" align="right" %}
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Pos" key="position" align="right" %}
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+              <template x-for="r in view" :key="r.page">
+                <tr class="text-gray-700 dark:text-gray-300">
+                  <td class="py-2 pr-4 font-mono text-xs"><a :href="r.page" target="_blank" rel="noopener" class="text-gsc-p1 hover:underline" x-text="r.page.replace(SC_SITE_BASE,'') || '/'"></a></td>
+                  <td class="py-2 pr-4 text-right tabular-nums" x-text="fmt(r.impressions)"></td>
+                  <td class="py-2 pr-4 text-right tabular-nums" x-text="fmt(r.clicks)"></td>
+                  <td class="py-2 pr-4 text-right tabular-nums"><span x-text="r.ctr"></span>%</td>
+                  <td class="py-2 text-right tabular-nums" x-text="r.position"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+        {% include "keel_seo/gsc/_sc_pager.html" %}
+      </div>
+    </div>
+  </div>
+</section>
+
+{% comment %} ---- Dedicated-content candidates — Detail / By cluster, with queue action ---- {% endcomment %}
+{{ sc_dedicated_candidates|json_script:"tbl-ded" }}
+{{ sc_dedicated_by_cluster|json_script:"tbl-ded-cl" }}
+<section class="mb-8" x-data="scTabs('detail')">
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h4 class="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-white/90">{% icon "target" class="h-4 w-4 text-gsc-p4" %}Dedicated-content candidates<span class="rounded-full bg-gsc-p4/15 px-2 py-0.5 text-xs font-semibold text-gray-600 dark:text-gray-300">{{ sc_dedicated_candidates_count|intcomma }}</span></h4>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">High-impression queries ranking below page 1 — we lack a strong page for them. Send one straight to the content queue.</p>
+      </div>
+      <div class="sc-seg" role="tablist" aria-label="View dedicated candidates by">
+        <button type="button" class="sc-seg__btn" :class="is('detail') && 'is-on'" @click="set('detail')" :aria-selected="is('detail')">Detail</button>
+        <button type="button" class="sc-seg__btn" :class="is('cluster') && 'is-on'" @click="set('cluster')" :aria-selected="is('cluster')">By cluster</button>
+      </div>
+    </div>
+
+    <div x-show="is('detail')">
+      <div x-data="scTable('tbl-ded', 15)">
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-left text-sm">
+            <thead class="text-xs uppercase tracking-wider text-gray-400 dark:text-gray-500">
+              <tr class="border-b border-gray-100 dark:border-gray-800">
+                <th class="py-2 pr-3 font-medium">Query</th>
+                <th class="py-2 pr-3 font-medium">Cluster</th>
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Impr" key="impressions" align="right" %}
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Pos" key="position" align="right" %}
+                <th class="py-2 pl-3 text-right font-medium">Action</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+              <template x-for="r in view" :key="r.query">
+                <tr class="text-gray-700 dark:text-gray-300" x-data="scDedicatedRow(r)" x-show="!removed">
+                  <td class="py-2 pr-3 font-mono text-xs" x-text="r.query"></td>
+                  <td class="py-2 pr-3"><span class="whitespace-nowrap rounded-md bg-gsc-p1/15 px-2 py-0.5 text-xs font-medium text-gray-600 dark:text-gray-300" x-text="r.cluster"></span></td>
+                  <td class="py-2 pr-3 text-right text-xs tabular-nums"><span x-text="fmt(r.impressions)"></span> impr</td>
+                  <td class="py-2 pr-3 text-right"><span class="rounded-full bg-warning-50 px-2 py-0.5 text-xs text-warning-600 dark:bg-warning-500/15 dark:text-warning-300">pos <span x-text="r.position"></span></span></td>
+                  <td class="py-2 pl-3 text-right">
+                    <div class="sc-row-actions">
+                      <button type="button" class="sc-qbtn" x-show="state!=='done'" :disabled="state==='loading'" @click="send()" :title="state==='error' ? msg : 'Add this keyword to the clustering queue'">
+                        <template x-if="state==='idle'"><span class="contents">{% icon "plus" class="h-3.5 w-3.5" %}Add to Plan</span></template>
+                        <template x-if="state==='loading'"><span>…</span></template>
+                        <template x-if="state==='error'"><span x-text="msg"></span></template>
+                      </button>
+                      <a class="sc-qbtn sc-qbtn--done" x-show="state==='done'" x-cloak :href="url">{% icon "check" class="h-3.5 w-3.5" %}<span x-text="msg"></span></a>
+                      <button type="button" class="sc-qbtn sc-qbtn--del" @click="del()" title="Remove — won't be suggested again">{% icon "trash" class="h-3.5 w-3.5" %}</button>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+        {% include "keel_seo/gsc/_sc_pager.html" %}
+      </div>
+    </div>
+
+    <div x-show="is('cluster')" x-cloak>
+      <div x-data="scTable('tbl-ded-cl', 15)">
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-left text-sm">
+            <thead class="text-xs uppercase tracking-wider text-gray-400 dark:text-gray-500">
+              <tr class="border-b border-gray-100 dark:border-gray-800">
+                <th class="py-2 pr-4 font-medium">Cluster</th>
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Kw" key="keywords" align="right" %}
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Impr" key="impressions" align="right" %}
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Clk" key="clicks" align="right" %}
+                <th class="py-2 pl-3 text-right font-medium">Action</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+              <template x-for="r in view" :key="r.cluster">
+                <tr class="text-gray-700 dark:text-gray-300" x-data="scClusterRow(r)" x-show="!removed">
+                  <td class="py-2 pr-4 font-mono text-xs" x-text="r.cluster"></td>
+                  <td class="py-2 pr-4 text-right tabular-nums" x-text="r.keywords"></td>
+                  <td class="py-2 pr-4 text-right tabular-nums" x-text="fmt(r.impressions)"></td>
+                  <td class="py-2 pr-4 text-right tabular-nums" x-text="fmt(r.clicks)"></td>
+                  <td class="py-2 pl-3 text-right">
+                    <div class="sc-row-actions">
+                      <button type="button" class="sc-qbtn" x-show="state!=='done'" :disabled="state==='loading'" @click="send()" :title="state==='error' ? msg : 'Send this cluster to the keyword-clustering queue'">
+                        <template x-if="state==='idle'"><span class="contents">{% icon "plus" class="h-3.5 w-3.5" %}Add to Plan</span></template>
+                        <template x-if="state==='loading'"><span>&hellip;</span></template>
+                        <template x-if="state==='error'"><span x-text="msg"></span></template>
+                      </button>
+                      <a class="sc-qbtn sc-qbtn--done" x-show="state==='done'" x-cloak :href="url">{% icon "check" class="h-3.5 w-3.5" %}<span x-text="msg"></span></a>
+                      <button type="button" class="sc-qbtn sc-qbtn--del" @click="del()" title="Remove — won't be suggested again">{% icon "trash" class="h-3.5 w-3.5" %}</button>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+        {% include "keel_seo/gsc/_sc_pager.html" %}
+      </div>
+    </div>
+  </div>
+</section>
+
+{% comment %} ---- New queries — Detail / By cluster ---- {% endcomment %}
+{{ sc_new_queries|json_script:"tbl-new" }}
+{{ sc_new_by_cluster|json_script:"tbl-new-cl" }}
+<section class="mb-8" x-data="scTabs('detail')">
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h4 class="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-white/90">{% icon "trending-up" class="h-4 w-4 text-gsc-p3" %}New queries<span class="rounded-full bg-gsc-p3/15 px-2 py-0.5 text-xs font-semibold text-gray-600 dark:text-gray-300">{{ sc_totals.new_queries|intcomma }}</span></h4>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Demand that did not appear in the previous equal-length period — the raw material for new-intent insights.</p>
+      </div>
+      <div class="sc-seg" role="tablist" aria-label="View new queries by">
+        <button type="button" class="sc-seg__btn" :class="is('detail') && 'is-on'" @click="set('detail')" :aria-selected="is('detail')">Detail</button>
+        <button type="button" class="sc-seg__btn" :class="is('cluster') && 'is-on'" @click="set('cluster')" :aria-selected="is('cluster')">By cluster</button>
+      </div>
+    </div>
+
+    <div x-show="is('detail')">
+      <div x-data="scTable('tbl-new', 15)">
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-left text-sm">
+            <thead class="text-xs uppercase tracking-wider text-gray-400 dark:text-gray-500">
+              <tr class="border-b border-gray-100 dark:border-gray-800">
+                <th class="py-2 pr-3 font-medium">Query</th>
+                <th class="py-2 pr-3 font-medium">Cluster</th>
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Impr" key="impressions" align="right" %}
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Clk" key="clicks" align="right" %}
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+              <template x-for="r in view" :key="r.query">
+                <tr class="text-gray-700 dark:text-gray-300">
+                  <td class="py-2 pr-3 font-mono text-xs" x-text="r.query"></td>
+                  <td class="py-2 pr-3"><span class="whitespace-nowrap rounded-md bg-gsc-p1/15 px-2 py-0.5 text-xs font-medium text-gray-600 dark:text-gray-300" x-text="r.cluster"></span></td>
+                  <td class="py-2 pr-3 text-right text-xs tabular-nums"><span x-text="fmt(r.impressions)"></span> impr</td>
+                  <td class="py-2 text-right text-xs tabular-nums text-gray-500 dark:text-gray-400"><span x-text="r.clicks"></span> clk</td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+        {% include "keel_seo/gsc/_sc_pager.html" %}
+      </div>
+    </div>
+
+    <div x-show="is('cluster')" x-cloak>
+      <div x-data="scTable('tbl-new-cl', 15)">
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-left text-sm">
+            <thead class="text-xs uppercase tracking-wider text-gray-400 dark:text-gray-500">
+              <tr class="border-b border-gray-100 dark:border-gray-800">
+                <th class="py-2 pr-4 font-medium">Cluster</th>
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Kw" key="keywords" align="right" %}
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Impr" key="impressions" align="right" %}
+                {% include "keel_seo/gsc/_sc_sort_th.html" with label="Clk" key="clicks" align="right" %}
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+              <template x-for="r in view" :key="r.cluster">
+                <tr class="text-gray-700 dark:text-gray-300">
+                  <td class="py-2 pr-4 font-mono text-xs" x-text="r.cluster"></td>
+                  <td class="py-2 pr-4 text-right tabular-nums" x-text="r.keywords"></td>
+                  <td class="py-2 pr-4 text-right tabular-nums" x-text="fmt(r.impressions)"></td>
+                  <td class="py-2 text-right tabular-nums" x-text="fmt(r.clicks)"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+        {% include "keel_seo/gsc/_sc_pager.html" %}
+      </div>
+    </div>
+  </div>
+</section>
+
+</div>{% comment %} /#sc-opportunities {% endcomment %}
+
+{% comment %} ========================= SITE STRUCTURE ========================= {% endcomment %}
+<div id="sc-structure" class="sc-section">
+<h2 class="sc-sechead">{% icon "chart-candle" class="h-4 w-4 text-gsc-p1" %}Site structure</h2>
+
+{% comment %} ---- Ranking distribution — two charts in one card ---- {% endcomment %}
+<section class="mb-8">
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+    <h4 class="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-white/90">{% icon "chart-candle" class="h-4 w-4 text-gsc-p1" %}Ranking distribution</h4>
+    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Where we rank — <span class="font-medium text-warning-600 dark:text-warning-300">position 4-20 is striking distance</span> (demand just off the top).</p>
+    <div class="mt-5 grid grid-cols-1 gap-8 lg:grid-cols-2">
+
+      <div>
+        <p class="mb-3 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Keyword share by position</p>
+        <div class="space-y-5">
+          {% for b in sc_position_bands %}
+          <div>
+            <div class="mb-1 flex items-center justify-between text-xs">
+              <span class="font-medium text-gray-700 dark:text-gray-300">Position {{ b.label }}<span class="ml-1 text-gray-400 dark:text-gray-500">· {{ b.blurb }}</span></span>
+              <span class="tabular-nums text-gray-500 dark:text-gray-400">{{ b.query_pct }}% · {{ b.queries|intcomma }} q</span>
+            </div>
+            <div class="h-4 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+              <div class="h-full w-{{ b.width_12 }}/12 rounded-full {% if b.tone == 'good' %}bg-gsc-p3{% elif b.tone == 'opportunity' %}bg-gsc-p4{% else %}bg-gray-300{% endif %}"></div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div>
+        <div class="mb-3 flex items-center justify-between">
+          <p class="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">CTR by position</p>
+          <span class="text-[11px] text-gray-400 dark:text-gray-500">clicks ÷ impressions per rank</span>
+        </div>
+        <div class="space-y-2.5">
+          {% for c in sc_ctr_curve %}
+          <div class="flex items-center gap-3">
+            <span class="w-10 shrink-0 text-right text-xs tabular-nums text-gray-500 dark:text-gray-400">{{ c.label }}</span>
+            <div class="h-3.5 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+              <div class="h-full w-{{ c.width_12 }}/12 rounded-full bg-gsc-p1"></div>
+            </div>
+            <span class="w-12 shrink-0 text-xs tabular-nums text-gray-600 dark:text-gray-300">{{ c.ctr_pct }}%</span>
+          </div>
+          {% endfor %}
+        </div>
+        <p class="mt-3 text-[11px] text-gray-400 dark:text-gray-500">The expected click rate at each rank — the baseline the “ranking but not clicked” panel measures against.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+{% comment %} ---- Clicks by market ---- {% endcomment %}
+<section class="mb-8">
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+    <h4 class="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-white/90">{% icon "globe" class="h-4 w-4 text-gsc-p3" %}Clicks by market</h4>
+    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Where the demand actually lands.</p>
+    <div class="mt-5 grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
+      {% for m in sc_by_market %}
+      <div>
+        <div class="mb-1 flex items-center justify-between text-xs">
+          <span class="font-medium text-gray-700 dark:text-gray-300">{{ m.market }}</span>
+          <span class="tabular-nums text-gray-500 dark:text-gray-400">{{ m.clicks|intcomma }} clk · {{ m.queries|intcomma }} q</span>
+        </div>
+        <div class="h-4 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+          <div class="h-full w-{{ m.width_12 }}/12 rounded-full bg-gsc-p1"></div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+{% comment %} ---- Brand share — one comparison bar table (replaces 3 pies) ---- {% endcomment %}
+{% if sc_brand_bars %}
+<section class="mb-8">
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+    <h4 class="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-white/90">{% icon "target" class="h-4 w-4 text-gsc-p2" %}Brand share</h4>
+    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Who owns the demand — each brand's share of keywords, impressions and clicks.</p>
+    <div class="mt-4 overflow-x-auto">
+      <table class="min-w-full text-left text-sm sc-brand">
+        <thead class="text-xs uppercase tracking-wider text-gray-400 dark:text-gray-500">
+          <tr class="border-b border-gray-100 dark:border-gray-800">
+            <th class="py-2 pr-4 font-medium">Brand</th>
+            <th class="py-2 pr-4 font-medium">Keywords</th>
+            <th class="py-2 pr-4 font-medium">Impressions</th>
+            <th class="py-2 font-medium">Clicks</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+          {% for r in sc_brand_bars %}
+          <tr class="text-gray-700 dark:text-gray-300">
+            <td class="py-2 pr-4 font-medium">{{ r.brand }}</td>
+            <td class="py-2 pr-4"><div class="sc-brand__cell"><div class="sc-brand__track"><div class="sc-brand__bar bg-gsc-p3 w-{{ r.queries_width_12 }}/12"></div></div><span class="sc-brand__pct">{{ r.queries }}%</span></div></td>
+            <td class="py-2 pr-4"><div class="sc-brand__cell"><div class="sc-brand__track"><div class="sc-brand__bar bg-gsc-p2 w-{{ r.impressions_width_12 }}/12"></div></div><span class="sc-brand__pct">{{ r.impressions }}%</span></div></td>
+            <td class="py-2"><div class="sc-brand__cell"><div class="sc-brand__track"><div class="sc-brand__bar bg-gsc-p1 w-{{ r.clicks_width_12 }}/12"></div></div><span class="sc-brand__pct">{{ r.clicks }}%</span></div></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% comment %} ---- Traffic by URL directory (table with clicks-share bars) ---- {% endcomment %}
+{{ sc_directory_rows|json_script:"tbl-dir" }}
+<section class="mb-8">
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+    <h4 class="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-white/90">{% icon "world-www" class="h-4 w-4 text-gsc-p1" %}Traffic by URL directory</h4>
+    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">First path segment after the domain — where keywords, clicks and impressions concentrate.</p>
+    <div x-data="scTable('tbl-dir', 15)" class="mt-4">
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-left text-sm">
+          <thead class="text-xs uppercase tracking-wider text-gray-400 dark:text-gray-500">
+            <tr class="border-b border-gray-100 dark:border-gray-800">
+              <th class="py-2 pr-4 font-medium">Directory</th>
+              {% include "keel_seo/gsc/_sc_sort_th.html" with label="Keywords" key="queries" align="right" %}
+              {% include "keel_seo/gsc/_sc_sort_th.html" with label="Clicks" key="clicks" align="right" %}
+              {% include "keel_seo/gsc/_sc_sort_th.html" with label="Impressions" key="impressions" align="right" %}
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+            <template x-for="r in view" :key="r.directory">
+              <tr class="text-gray-700 dark:text-gray-300">
+                <td class="py-2 pr-4 font-mono text-xs">/<span x-text="r.directory"></span></td>
+                <td class="py-2 pr-4 text-right tabular-nums"><span x-text="fmt(r.queries)"></span> <span class="text-gray-400 dark:text-gray-500">· <span x-text="r.query_pct"></span>%</span></td>
+                <td class="py-2 pr-4">
+                  <div class="flex items-center justify-end gap-2">
+                    <div class="h-1.5 w-24 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800"><div class="h-full rounded-full bg-gsc-p1" :class="'w-'+r.clicks_width_12+'/12'"></div></div>
+                    <span class="tabular-nums"><span x-text="fmt(r.clicks)"></span> <span class="text-gray-400 dark:text-gray-500">· <span x-text="r.clicks_pct"></span>%</span></span>
+                  </div>
+                </td>
+                <td class="py-2 text-right tabular-nums"><span x-text="fmt(r.impressions)"></span> <span class="text-gray-400 dark:text-gray-500">· <span x-text="r.impressions_pct"></span>%</span></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      {% include "keel_seo/gsc/_sc_pager.html" %}
+    </div>
+  </div>
+</section>
+
+{% comment %} ---- Full-width: ranking bands over the last 90 days ---- {% endcomment %}
+<section class="mb-8">
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <div>
+        <h4 class="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-white/90">{% icon "trending-up" class="h-4 w-4 text-gsc-p3" %}Ranking trend — last 3 months</h4>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Impression share in each position band, compared across three 30-day windows. Top bands (1-3, 4-10) growing = we're climbing; 21+ growing = slipping.</p>
+      </div>
+      <div class="flex gap-3">
+        {% for l in sc_time_legend %}
+        <span class="flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400"><span class="h-2.5 w-2.5 rounded-sm bg-{{ l.color }}"></span>{{ l.label }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    <svg viewBox="0 0 {{ sc_time_bars.w }} {{ sc_time_bars.h }}" class="mt-4 h-44 w-full" preserveAspectRatio="none">
+      {% for r in sc_time_bars.rects %}
+      <rect x="{{ r.x }}" y="{{ r.y }}" width="{{ r.w }}" height="{{ r.h }}" rx="1" data-tip="Pos {{ r.glabel }} · {{ r.slabel }} {{ r.value }}%" @mouseenter="showTip($event)" @mousemove="moveTip($event)" @mouseleave="tip.show=false" class="fill-{{ r.color }} transition-opacity hover:opacity-80"></rect>
+      {% endfor %}
+    </svg>
+    <div class="mt-2 flex justify-around text-[11px] text-gray-500 dark:text-gray-400">
+      {% for g in sc_time_bars.glabels %}<span>Position {{ g.label }}</span>{% endfor %}
+    </div>
+  </div>
+</section>
+
+{% if sc_coverage %}
+{% comment %} ---- Index coverage (URL Inspection) — collapsed accordion ---- {% endcomment %}
+<section class="mb-8" x-data="{open:false}">
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] sc-acc lg:p-6" :class="open && 'is-open'">
+    <button type="button" class="sc-acc__head" @click="open=!open" :aria-expanded="open.toString()">
+      <span class="flex items-center gap-2">
+        <span class="text-base font-semibold text-gray-800 dark:text-white/90 flex items-center gap-2">{% icon "world-www" class="h-4 w-4 text-gsc-p3" %}Index coverage</span>
+        <span class="rounded-full bg-gsc-p3/15 px-2 py-0.5 text-xs font-semibold text-gray-600 dark:text-gray-300">{{ sc_coverage.indexed }}/{{ sc_coverage.total }} indexed{% if sc_coverage.not_indexed_count %} · {{ sc_coverage.not_indexed_count }} not{% endif %}</span>
+      </span>
+      <span class="flex items-center gap-2">
+        <span class="text-[11px] text-gray-400 dark:text-gray-500">checked {{ sc_coverage.updated }}</span>
+        <span class="sc-acc__chev">{% icon "chevron-right" class="h-4 w-4" %}</span>
+      </span>
+    </button>
+    <div class="sc-acc__body">
+    <div class="sc-acc__inner">
+    <p class="mt-3 text-xs text-gray-500 dark:text-gray-400">Indexable landings Google has actually indexed. A page you opened up (<code class="font-mono">is_indexable</code>) but Google has not indexed is a real gap.</p>
+    <div class="mt-4 flex flex-wrap items-end gap-8">
+      <div>
+        <p class="text-title-sm font-bold text-gray-800 dark:text-white/90">{{ sc_coverage.indexed }}<span class="text-lg text-gray-400 dark:text-gray-500">/{{ sc_coverage.total }}</span></p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">indexed</p>
+      </div>
+      <div>
+        <p class="text-title-sm font-bold {% if sc_coverage.not_indexed_count %}sc-neg{% else %}text-gray-800 dark:text-white/90{% endif %}">{{ sc_coverage.not_indexed_count }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">not indexed</p>
+      </div>
+    </div>
+    {% if sc_coverage.not_indexed %}
+    <div class="mt-4 overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="border-b border-gray-100 text-left text-gray-400 dark:border-gray-800 dark:text-gray-500">
+            <th class="py-1.5 pr-2 font-medium">Landing (not indexed)</th>
+            <th class="py-1.5 pl-2 font-medium">Coverage state</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in sc_coverage.not_indexed|slice:":40" %}
+          <tr class="border-b border-gray-50 dark:border-gray-800/60">
+            <td class="max-w-0 truncate py-1.5 pr-2"><a href="{{ r.url }}" target="_blank" rel="noopener nofollow" class="text-gsc-p1 hover:underline" title="{{ r.url }}">{{ r.url|cut:sc_site_base }}</a></td>
+            <td class="py-1.5 pl-2 text-gray-600 dark:text-gray-300">{{ r.coverage }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    </div>{% comment %} /sc-acc__inner {% endcomment %}
+    </div>{% comment %} /sc-acc__body {% endcomment %}
+  </div>
+</section>
+{% endif %}
+
+</div>{% comment %} /#sc-structure {% endcomment %}
+
+{% comment %} ============================ ACTIONS ============================ {% endcomment %}
+<div id="sc-actions" class="sc-section">
+<section class="mb-3 flex items-center justify-between">
+  <h2 class="sc-sechead mb-0">{% icon "sparkles" class="h-4 w-4 text-gsc-p2" %}Insights<span class="text-xs font-normal text-gray-400 dark:text-gray-500">— curated from the data; dismissing removes a card for its specific data only</span></h2>
+  <button type="button" @click="restore()"
+          x-show="({{ sc_insights_dismissed_count }} + dismissed.length) > 0" x-cloak
+          class="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-white/[0.03]">
+    Restore <span x-text="({{ sc_insights_dismissed_count }} + dismissed.length)"></span> hidden
+  </button>
+</section>
+
+{% for cat in sc_insights_by_category %}
+<section class="mb-8">
+  <div class="mb-3 flex items-center gap-2">
+    <h4 class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ cat.label }}</h4>
+    <span class="text-[11px] text-gray-400 dark:text-gray-500">{{ cat.blurb }}</span>
+  </div>
+  {% if cat.items %}
+  <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+    {% for ins in cat.items %}
+    <div x-show="!dismissed.includes('{{ ins.fingerprint }}')" x-transition
+         class="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 pl-6 dark:border-gray-800 dark:bg-white/[0.03]">
+      <span class="absolute inset-y-0 left-0 w-1.5 {% if ins.priority == 'high' %}bg-gsc-p5{% elif ins.priority == 'medium' %}bg-gsc-p4{% else %}bg-gray-300 dark:bg-gray-600{% endif %}"></span>
+      <div class="flex items-start justify-between gap-3">
+        <h4 class="text-sm font-semibold text-gray-800 dark:text-white/90">{{ ins.title }}</h4>
+        <div class="flex shrink-0 items-center gap-1.5">
+          {% if ins.priority == "high" %}<span class="rounded-full bg-error-50 px-2 py-0.5 text-xs font-semibold text-error-600 dark:bg-error-500/15 dark:text-error-300">high</span>
+          {% elif ins.priority == "medium" %}<span class="rounded-full bg-warning-50 px-2 py-0.5 text-xs font-semibold text-warning-600 dark:bg-warning-500/15 dark:text-warning-300">medium</span>
+          {% else %}<span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500 dark:bg-gray-800 dark:text-gray-400">low</span>{% endif %}
+          <div class="relative">
+            <button type="button" @click="toggleMenu('{{ ins.fingerprint }}')" title="Dismiss this insight"
+                    class="flex h-6 w-6 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200">
+              <span class="text-lg leading-none">&times;</span>
+            </button>
+            <div x-show="menuFp==='{{ ins.fingerprint }}'" x-cloak @click.outside="menuFp=null" x-transition class="sc-menu">
+              <button type="button" class="sc-menu__item" @click="dismiss('{{ ins.fingerprint }}','done')">{% icon "check" class="h-3.5 w-3.5 text-gsc-p3" %}Mark done</button>
+              <button type="button" class="sc-menu__item" @click="dismiss('{{ ins.fingerprint }}','irrelevant')">{% icon "x" class="h-3.5 w-3.5 text-gray-400" %}Not relevant</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="mt-2 text-xs leading-relaxed text-gray-600 dark:text-gray-400">{{ ins.summary }}</p>
+      {% if ins.metrics %}
+      <div class="mt-3 flex gap-4 text-xs text-gray-500 dark:text-gray-400">
+        {% if ins.metrics.impressions %}<span>{{ ins.metrics.impressions|intcomma }} impr</span>{% endif %}
+        {% if ins.metrics.clicks %}<span>{{ ins.metrics.clicks|intcomma }} clk</span>{% endif %}
+      </div>
+      {% endif %}
+      {% if ins.queries %}
+      <div class="mt-3 flex flex-wrap gap-1.5">
+        {% for qq in ins.queries %}<span class="rounded-md bg-gray-100 px-2 py-0.5 font-mono text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300">{{ qq }}</span>{% endfor %}
+      </div>
+      {% endif %}
+      <div class="mt-4 rounded-lg bg-brand-50/60 p-3 dark:bg-brand-500/10">
+        <p class="text-xs leading-relaxed text-gray-700 dark:text-gray-300"><span class="font-semibold text-brand-600 dark:text-brand-300">Do:</span> {{ ins.recommendation }}</p>
+        {% if ins.target.url %}<p class="mt-1.5 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">{% icon "link" class="h-3.5 w-3.5" %}<span class="font-mono">{{ ins.target.url }}</span></p>{% endif %}
+      </div>
+      {% if ins.category == "new_intent" or ins.category == "dedicated_content" %}
+      <div class="mt-3 flex justify-end">
+        <span x-data="scQueue({title: '{{ ins.title|escapejs }}', intent: '{{ ins.summary|escapejs }}', keyword: '{% if ins.queries %}{{ ins.queries.0|escapejs }}{% endif %}', source_ref: 'search-console:insight:{{ ins.id|escapejs }}'})">
+          <button type="button" class="sc-qbtn" x-show="state!=='done'" :disabled="state==='loading'" @click="send()" :title="state==='error' ? msg : 'Send to ContentPlan'">
+            <template x-if="state==='idle'"><span class="contents">{% icon "plus" class="h-3.5 w-3.5" %}Send to ContentPlan</span></template>
+            <template x-if="state==='loading'"><span>…</span></template>
+            <template x-if="state==='error'"><span x-text="msg"></span></template>
+          </button>
+          <a class="sc-qbtn sc-qbtn--done" x-show="state==='done'" x-cloak :href="url" target="_blank" rel="noopener">{% icon "check" class="h-3.5 w-3.5" %}<span x-text="msg"></span></a>
+        </span>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-center text-xs text-gray-400 dark:border-gray-800 dark:text-gray-500">No {{ cat.label|lower }} insights yet — ask in chat to generate them from the latest data.</p>
+  {% endif %}
+</section>
+{% endfor %}
+
+</div>{% comment %} /#sc-actions {% endcomment %}
+
+</div>{% comment %} /#sc-root {% endcomment %}
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'keel_seo/gsc/search_console.js' %}"></script>
+{% endblock %}

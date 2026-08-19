@@ -82,8 +82,80 @@ The registry writes `registry.json` (the store), `registry.csv`, and dated
 scope vocabulary, market tagging, taxonomy — is host business logic and stays in
 the consuming project; this package owns only the neutral connector + registry.
 
+### Google Indexing API (`keel_seo.gsc.indexing`)
+
+Submits URL-update / URL-delete notifications so freshly-published pages get
+crawled sooner than sitemap discovery alone. Shares `$GSC_CREDENTIALS` with the
+connector, but needs a DIFFERENT permission level: the service account must be an
+**Owner** of the property (Restricted/Full is not enough) and the "Web Search
+Indexing API" must be enabled on the Cloud project.
+
+```
+python -m keel_seo.gsc.indexing publish <url>   # notify URL_UPDATED
+python -m keel_seo.gsc.indexing remove  <url>   # notify URL_DELETED
+python -m keel_seo.gsc.indexing status  <url>   # read last-notification metadata
+```
+
+Or from Python: `notify_url(url)`, `notify_urls(urls)` (per-URL errors captured,
+never raised), `url_status(url)`.
+
+### GSC dashboard UI (`keel_seo.gsc.dashboard` / `.views` / `.urls`)
+
+A `/search-console` reporting + insights dashboard — keel-seo's first UI surface.
+Renders a per-window snapshot a host's own offline exporter produced (deterministic,
+no LLM), plus host-curated `gsc_insights.json` insight cards (dismissible, keyed by
+a fingerprint of each insight's data so a look-alike for new data still shows), and
+optionally computes any date range live via `keel_seo.gsc.connector` when
+`GSC_LIVE=1`. What is intentionally NOT here: generating the dashboard JSON or the
+insights themselves — that stays host tooling (SignalBots keeps `tools/gsc/*` for
+this); the package only reads what the host produced.
+
+Mount it at whatever path you want:
+
+```python
+# host urls.py
+from django.urls import include, path
+
+urlpatterns = [
+    path("admin-os/search-console", include("keel_seo.gsc.urls")),
+    ...
+]
+```
+
+This exposes `<mount>`, `<mount>/dismiss`, `<mount>/restore`, `<mount>/queue`,
+`<mount>/dedicated/exclude`, `<mount>/dedicated/queue`,
+`<mount>/dedicated/cluster-exclude`, `<mount>/dedicated/cluster-queue` under the
+`keel_seo_gsc` app namespace (`{% url 'keel_seo_gsc:search_console' %}`, etc.).
+Every view is superuser-gated.
+
+Configure via `KEEL_SEO` (all optional; see `keel_seo/config.py` for the full
+docstring):
+
+- `gsc_data_dir` — directory holding `gsc_dashboard.json` / `gsc_insights.json` /
+  `query_enrichment.json` / `windows/*.json` (a host's exporter output). Default
+  `<MEDIA_ROOT>/gsc/data`.
+- `gsc_base_template` — the template the dashboard extends for its chrome (must
+  define `title` / `extra_head` / `content` / `extra_js` blocks). Default is
+  keel-seo's own bare fallback so the package renders standalone.
+- `gsc_queue_hook` — dotted path to `(spec, *, source_type, source_ref) -> (obj,
+  outcome)`, the host's content-ideation intake for the "Add to Plan" button on an
+  insight card. No default — genuinely host business logic.
+- `gsc_queue_list_url_name` / `gsc_plan_edit_url_name` — URL names (reverse()-able)
+  for the host's clustering-queue list and content-plan edit views, used for
+  "already queued" links.
+- `gsc_forbidden_redirect` — URL name an authenticated-but-not-superuser visitor is
+  sent to. Default raises Django's standard 403.
+
+Keyword picks and whole-cluster queueing (`dedicated_queue` / `cluster_queue`) go
+straight into `keel_content`'s clustering-queue accumulator (a peer Keel package,
+soft-imported) — no host hook needed for those two.
+
 ## Status
 
-v0.1.4 — extracted, neutralized, and consumed by SignalBots (its first host): the
-Landing table is adopted via the state-only `0001`, the sitemap is composed, the
-noindex-by-default gate is live, and the GSC query registry is in use.
+v0.4.0. Consumed by SignalBots (its first host) since v0.1.4: the Landing table is
+adopted via the state-only `0001`, the sitemap is composed, the noindex-by-default
+gate is live, and the GSC query registry is in use. Since then: greenfield-capable
+initial migrations (v0.2.0), the GSC Indexing API client (v0.2.1), the
+directory-grouped sitemap engine consumed by signalbots/revenika/martiland
+(v0.3.0), and the `/search-console` dashboard UI — keel-seo's first views/urls/
+templates surface, migrated wholesale from SignalBots' `admin_os` app (v0.4.0).

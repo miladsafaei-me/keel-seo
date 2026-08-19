@@ -1,0 +1,9 @@
+{% comment %}Pager footer for an scTable() scope — uses from/to/total/pages/page/prev/next/fmt.{% endcomment %}
+<div class="mt-4 flex items-center justify-between border-t border-gray-100 pt-3 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
+  <span>Showing <span x-text="from"></span>–<span x-text="to"></span> of <span x-text="fmt(total)"></span></span>
+  <div class="flex items-center gap-1.5" x-show="pages > 1">
+    <button @click="prev()" :disabled="page===1" class="rounded-lg border border-gray-200 px-2.5 py-1 font-medium hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-700 dark:hover:bg-white/[0.03]">Prev</button>
+    <span class="px-1 tabular-nums" x-text="`${page} / ${pages}`"></span>
+    <button @click="next()" :disabled="page===pages" class="rounded-lg border border-gray-200 px-2.5 py-1 font-medium hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-700 dark:hover:bg-white/[0.03]">Next</button>
+  </div>
+</div>

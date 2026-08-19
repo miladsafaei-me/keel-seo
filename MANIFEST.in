@@ -1,2 +1,3 @@
 recursive-include src/keel_seo/templates *
+recursive-include src/keel_seo/static *
 recursive-include src/keel_seo/tools *

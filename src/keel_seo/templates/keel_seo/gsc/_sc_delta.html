@@ -1,0 +1,4 @@
+{% load humanize %}{% comment %} Period-over-period KPI delta chip. Expects `d` = one sc_kpi_deltas entry. {% endcomment %}
+{% if d %}<span class="sc-delta {% if d.up %}sc-delta--up{% else %}sc-delta--down{% endif %}" title="was {{ d.prev|intcomma }} in the previous period">
+  {% if d.pct == None %}new{% else %}{% if d.up %}▲{% else %}▼{% endif %} {{ d.abs_pct|floatformat:1 }}%{% endif %}
+</span>{% endif %}

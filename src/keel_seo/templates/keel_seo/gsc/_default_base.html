@@ -1,0 +1,21 @@
+<!doctype html>
+{% comment %}
+Bare fallback chrome for the GSC dashboard, used only when a host has not set
+KEEL_SEO["gsc_base_template"] to its own admin layout. Defines just the four blocks
+search_console.html fills in (title, extra_head, content, extra_js) — enough for the
+package to render standalone, with none of a host's navigation, auth chrome or
+theming. A real deployment should override gsc_base_template with its own admin
+base template exposing the same block names.
+{% endcomment %}
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Search Console{% endblock %}</title>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  {% block content %}{% endblock %}
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

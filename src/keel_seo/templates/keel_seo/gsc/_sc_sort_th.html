@@ -1,0 +1,2 @@
+{% comment %}Sortable datatable header cell. Use inside an scTable() x-data scope.
+Params: label, key (row field to sort on), align ("right" for numeric columns).{% endcomment %}<th class="cursor-pointer select-none py-2 pr-4 font-medium hover:text-gray-600 dark:hover:text-gray-300{% if align == 'right' %} text-right{% endif %}" @click="sortBy('{{ key }}')">{{ label }} <span class="text-gsc-p1" x-show="sortKey==='{{ key }}'" x-text="sortDir===1?'&#9650;':'&#9660;'"></span></th>
