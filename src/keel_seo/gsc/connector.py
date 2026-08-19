@@ -47,9 +47,24 @@ def _credentials_path() -> Path:
     return Path(os.environ.get("GSC_CREDENTIALS", str(DEFAULT_CREDENTIALS))).expanduser()
 
 
+class ConnectorError(RuntimeError):
+    """A connector-level failure (bad/missing key, API error, bad args).
+
+    This module is dual-purpose: a standalone CLI (``__main__``) AND a library
+    imported by ``keel_seo.gsc.live`` for the dashboard's live-API path. ``_fail``
+    used to call ``sys.exit`` directly, which raises ``SystemExit`` — a
+    ``BaseException``, not caught by the ``except Exception`` the dashboard wraps
+    every live call in. A malformed/placeholder service-account key (e.g. a `{}`
+    stub, present before real GSC credentials are issued) would then abort the
+    whole WSGI worker instead of the dashboard degrading to its "live pull
+    failed" state. Raising here and letting ``main()`` translate to stderr+exit
+    keeps the CLI UX identical while making library calls behave like normal
+    Python calls.
+    """
+
+
 def _fail(msg: str, code: int = 1) -> "None":
-    print(f"error: {msg}", file=sys.stderr)
-    sys.exit(code)
+    raise ConnectorError(msg)
 
 
 def _require_site(site: str) -> str:
@@ -214,7 +229,11 @@ def main() -> None:
     q.set_defaults(func=cmd_query)
 
     args = p.parse_args()
-    args.func(args)
+    try:
+        args.func(args)
+    except ConnectorError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

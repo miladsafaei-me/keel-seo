@@ -217,7 +217,11 @@ def main() -> None:
     sub.add_parser("stats", help="print registry summary").set_defaults(func=cmd_stats)
 
     args = p.parse_args()
-    args.func(args)
+    try:
+        args.func(args)
+    except gsc.ConnectorError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
