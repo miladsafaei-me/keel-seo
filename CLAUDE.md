@@ -42,6 +42,7 @@ fork of this code.
 | `KEEL_SEO["lastmod_hook"]` | `config.landing_lastmod_map` | none → no `<lastmod>` | `() -> {url: date}` |
 | `KEEL_SEO["landing_db_table"]` | `models.Landing.Meta` | `keel_seo_landing` | existing table name to adopt |
 | `KEEL_SEO["cache_ttl"]` | `context_processors.landing` | 300 | seconds |
+| `KEEL_SEO["sitemap_min_section_urls"]` | `sitemap_directory._grouped` | 2 | URLs a directory needs to earn its own `/<segment>.xml` |
 | critical-CSS `PAGES`/`CHROME` | `tools/gen_critical_css.js` | — | per-project manifest |
 | `KEEL_SEO["gsc_data_dir"]` | `config.gsc_data_dir` | `<MEDIA_ROOT>/gsc/data` | dir holding the exporter's JSON |
 | `KEEL_SEO["gsc_base_template"]` | `gsc/views.py` context | `keel_seo/gsc/_default_base.html` | template name (title/extra_head/content/extra_js blocks) |

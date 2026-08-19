@@ -17,6 +17,11 @@ key is optional and the defaults make the package work standalone:
         # genuinely changes often (so the sitemap emits a real <lastmod> for them
         # and marks them changefreq=hourly). Default: no dynamic-freshness pages.
         "lastmod_hook": "myapp.seo.build_lastmod_map",
+        # Smallest number of URLs a routing directory needs before the directory
+        # sitemap index links its own /<segment>.xml. A thinner directory keeps
+        # its URLs (they move into /static-sitemap.xml) but earns no section file.
+        # Default 2 — a one-page "directory" is not a section.
+        "sitemap_min_section_urls": 2,
 
         # ---- keel_seo.gsc dashboard (the /search-console UI, keel_seo.gsc.urls) ----
         # Directory holding the committed exporter output: gsc_dashboard.json,
@@ -54,6 +59,7 @@ _DEFAULTS = {
     "adopt_existing": False,
     "cache_ttl": 300,
     "lastmod_hook": None,
+    "sitemap_min_section_urls": 2,
     "gsc_data_dir": None,
     "gsc_base_template": "keel_seo/gsc/_default_base.html",
     "gsc_queue_hook": None,

@@ -41,6 +41,9 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
    - `cache_ttl` — per-path lookup cache TTL (default 300s).
    - `lastmod_hook` — dotted path to `() -> {url: date}` for pages that genuinely change
      often (e.g. a signals mirror's latest date per market URL). Default: none.
+   - `sitemap_min_section_urls` — how many indexable URLs a routing directory needs
+     before the index links its own `/<segment>.xml`. Thinner directories keep their
+     URLs (folded into `/static-sitemap.xml`) but get no section file. Default 2.
 
 ## Config-contract / override seams (the rawification points)
 

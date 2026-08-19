@@ -16,6 +16,12 @@ routing directory is a standalone page and lands in the static sitemap; a
 single-segment URL whose segment IS a routing directory (``/academy``, the
 section root) is grouped into that directory's sitemap alongside its children.
 
+A directory carrying fewer than ``KEEL_SEO["sitemap_min_section_urls"]``
+indexable URLs (default 2) gets no section of its own — the index must not link
+a sitemap file holding one page. Its URLs move into ``/static-sitemap.xml``, so
+they stay in the sitemap; only the section link disappears, and it comes back
+by itself once the directory grows past the threshold.
+
 Every section is rebuilt from live source state on each request — the source
 Sitemaps read the DB in ``items()``, and each source lists only indexable URLs —
 so publishing a page or toggling an indexability flag shows up on the next fetch.
@@ -43,6 +49,8 @@ from django.contrib.sitemaps import Sitemap
 from django.contrib.sitemaps import views as sitemap_views
 from django.contrib.sites.shortcuts import get_current_site
 from django.urls import path, re_path
+
+from .config import seo_setting
 
 # URL name the sitemap index reverses to build each child ``<loc>``. The section
 # regex turns the section key into ``<key>.xml`` at the site root.
@@ -109,7 +117,8 @@ def _grouped(request, source_sitemaps):
 
     First pass finds the routing directories (segments seen on a multi-segment
     URL); second pass files every URL into its directory section or the static
-    section. Directory sections come alphabetically, static last.
+    section; third pass demotes directories too thin to deserve a section of
+    their own. Directory sections come alphabetically, static last.
     """
     entries = _collect(request, source_sitemaps)
     dir_segments = set()
@@ -122,6 +131,16 @@ def _grouped(request, source_sitemaps):
         parts = _path_parts(entry["location"])
         key = parts[0] if (parts and parts[0] in dir_segments) else STATIC_SECTION
         buckets.setdefault(key, []).append(entry)
+    # A directory holding fewer than ``sitemap_min_section_urls`` indexable URLs
+    # is not a section: the index would advertise a sitemap file carrying a
+    # single page. Those URLs are demoted into the static sitemap rather than
+    # dropped, so nothing leaves the sitemap when a directory empties out.
+    minimum = max(1, int(seo_setting("sitemap_min_section_urls")))
+    for key in [
+        k for k, urls in buckets.items()
+        if k != STATIC_SECTION and len(urls) < minimum
+    ]:
+        buckets.setdefault(STATIC_SECTION, []).extend(buckets.pop(key))
     ordered = {}
     for segment in sorted(k for k in buckets if k != STATIC_SECTION):
         ordered[segment] = _PrebuiltSitemap(buckets[segment])
