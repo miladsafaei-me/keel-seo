@@ -2,6 +2,22 @@
    Scoped to #sc-root so nothing else in /admin-os is affected. Loaded after
    client.css (via {% block extra_head %}), so these id-scoped rules win. */
 
+/* Required half of Alpine's x-cloak pattern: the template marks the loading
+   overlay, the calendar popover and the hover tooltip x-cloak so they render
+   hidden until Alpine has bound x-show. Without this rule (Alpine's own docs
+   require the host to ship it — Alpine only ever REMOVES the attribute, never
+   defines what it does), a host whose base template doesn't load Alpine.js at
+   all — or loads it slowly, or fails to load it — renders these elements at
+   full, unhidden visibility from first paint. For the loading overlay that
+   means a fixed, full-viewport "Loading Search Console data…" panel sits over
+   the real (successfully rendered) dashboard permanently, since nothing ever
+   evaluates x-show="loading" to hide it. This single rule makes every x-cloak
+   element degrade to "hidden" instead of "stuck visible" when Alpine never
+   runs — correct either way, and no longer host-dependent.
+   Confirmed 2026-08-20: this is exactly what happened on Revenika, whose
+   admin_os/base.html never included Alpine.js at all. */
+[x-cloak] { display: none !important; }
+
 /* --- Type: every dashboard font 20% larger (default Tailwind sizes x1.2).
    Overriding the utilities (not zoom) scales fonts only, so the responsive
    layout width is unchanged and never overflows. --- */
