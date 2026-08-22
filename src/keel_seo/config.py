@@ -23,6 +23,22 @@ key is optional and the defaults make the package work standalone:
         # Default 2 — a one-page "directory" is not a section.
         "sitemap_min_section_urls": 2,
 
+        # ---- keel_seo.freshness (content-freshness engine) ----
+        # Opt-in switch: the keel_seo_freshness command renders every indexable
+        # Landing URL, so a host turns this on only once it wants that render
+        # pass (and the `{% last_updated %}` tag / `freshness_schema()` output)
+        # to mean anything. Default False → the command is a safe no-op.
+        "freshness_enabled": True,
+        # CSS-ish selector for the main-content region to hash: a bare tag name
+        # ("main"), "#some-id", or ".some-class". Must match exactly one element
+        # in the rendered page; keel_seo.freshness raises loudly if it can't find it.
+        "freshness_content_selector": "main",
+        # Extra (pattern, replacement) regex pairs applied on top of
+        # keel_seo.freshness.DEFAULT_STRIP_PATTERNS before hashing — for volatile
+        # substrings specific to this host's templates (e.g. a per-request nonce
+        # the built-in list doesn't know about). Default None → built-ins only.
+        "freshness_strip_patterns": None,
+
         # ---- keel_seo.gsc dashboard (the /search-console UI, keel_seo.gsc.urls) ----
         # Directory holding the committed exporter output: gsc_dashboard.json,
         # gsc_insights.json, query_enrichment.json, windows/*.json. Default (unset):
@@ -60,6 +76,9 @@ _DEFAULTS = {
     "cache_ttl": 300,
     "lastmod_hook": None,
     "sitemap_min_section_urls": 2,
+    "freshness_enabled": False,
+    "freshness_content_selector": "main",
+    "freshness_strip_patterns": None,
     "gsc_data_dir": None,
     "gsc_base_template": "keel_seo/gsc/_default_base.html",
     "gsc_queue_hook": None,

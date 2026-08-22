@@ -30,6 +30,25 @@ class Landing(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    content_hash = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="SHA-256 hex digest of the page's normalized rendered content "
+                  "(see keel_seo.freshness.normalize_content). Empty until the "
+                  "keel_seo_freshness command has processed this URL at least once.",
+    )
+    content_modified_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="When the rendered content genuinely last changed, per a "
+                  "content-hash comparison (keel_seo.freshness). None until first "
+                  "recorded by the keel_seo_freshness command. Publish THIS as "
+                  "dateModified/lastmod -- never 'updated_at', which bumps on every "
+                  "re-save regardless of whether the rendered content changed.",
+    )
+
     class Meta:
         db_table = seo_setting("landing_db_table")
         ordering = ["-created_at"]

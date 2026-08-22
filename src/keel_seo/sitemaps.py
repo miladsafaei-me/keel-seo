@@ -55,9 +55,15 @@ class LandingSitemap(Sitemap):
         return "hourly" if (obj.url.rstrip("/") or "/") in self._lastmod_map() else "monthly"
 
     def lastmod(self, obj: Landing):
-        # A real date only for host-declared dynamic-freshness URLs; ``None``
-        # (tag omitted) for everything else — no fabricated freshness.
-        return self._lastmod_map().get(obj.url.rstrip("/") or "/")
+        # The host's dynamic-freshness hook wins when it answers for this URL
+        # (it's the documented override and some hosts compute a better date);
+        # otherwise fall back to the content-freshness engine's real
+        # content_modified_at (keel_seo.freshness). ``None`` (tag omitted)
+        # only when neither has anything — no fabricated freshness.
+        hook_date = self._lastmod_map().get(obj.url.rstrip("/") or "/")
+        if hook_date is not None:
+            return hook_date
+        return obj.content_modified_at
 
     def _lastmod_map(self) -> dict:
         cache = getattr(self, "_lm_cache", None)

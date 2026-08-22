@@ -1,0 +1,15 @@
+{% load keel_seo_freshness %}<!doctype html>
+<html>
+<head><title>Test Page</title></head>
+<body>
+<header>Header chrome for {{ request.path }}, irrelevant to content freshness.</header>
+<main>
+  <h1>Stable heading</h1>
+  <p>{{ body }}</p>
+  {% csrf_token %}
+  <img src="/static/logo.png?v=abc123def">
+  {% last_updated %}
+</main>
+<footer>Footer chrome.</footer>
+</body>
+</html>

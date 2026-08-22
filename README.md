@@ -22,6 +22,9 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
 - `keel_seo.signals` — per-path cache invalidation on `Landing` change.
 - `keel_seo.admin_helpers.categorize_landing` — structural label for admin tables.
 - `keel_seo/tools/gen_critical_css.js` — the penthouse-based critical-CSS engine.
+- `keel_seo.freshness` (since v0.6.0) — the content-freshness engine: a real,
+  non-fabricated `dateModified`/`lastmod` per URL, driven by hashing each page's
+  rendered content rather than trusting `updated_at`. See below.
 
 ## Consume it (host wiring)
 
@@ -55,6 +58,98 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
 - **critical-CSS manifest** — `gen_critical_css.js` expects a per-project `PAGES`/`CHROME`
   manifest describing which URLs to process and the site chrome selectors. Supply it in
   the host; the sibling `extract_critical_css.js` (broker/site-specific) stays in the host.
+
+## Content freshness (`keel_seo.freshness`)
+
+A real `dateModified` / sitemap `lastmod` per URL, computed by **hashing each
+page's rendered content** rather than trusting a model's `updated_at`. The
+problem that solves: a deploy that re-imports the whole content corpus
+(`import_blog_posts --overwrite`, a glossary importer) bumps every row's own
+`updated_at` whether or not a single visible word changed — publishing that as
+`dateModified` tells search engines the entire site was rewritten on every
+deploy, which is worse than publishing nothing. Hashing the rendered HTML
+instead means a content edit, a template edit, a data edit and a code edit are
+all detected identically — anything that doesn't show up in what the reader
+sees doesn't move the date, and anything that does, does.
+
+Two-line host adoption:
+
+```python
+# settings.py
+KEEL_SEO = {
+    ...,
+    "freshness_enabled": True,   # opt in -- the render pass has a real cost
+}
+```
+
+```
+python manage.py keel_seo_freshness   # add to your deploy script, every deploy
+```
+
+Then, in any template that should show its freshness:
+
+```django
+{% load keel_seo_freshness %}
+{% last_updated %}
+```
+
+And in whatever builds a page's JSON-LD:
+
+```python
+from keel_seo.freshness import freshness_schema
+
+schema = {**my_schema, **freshness_schema(request.path)}  # adds "dateModified" when known
+```
+
+What each piece does:
+
+- `keel_seo.freshness.normalize_content(html, *, selector, strip_patterns)` —
+  extracts the `selector` region (a bare tag name like `"main"`, or `"#id"` /
+  `".class"`), strips volatile substrings (cache-busting `?v=` query strings,
+  CSRF tokens, CSP nonces, any element carrying `data-keel-freshness`), and
+  collapses whitespace. Pure function, stdlib regex only — no parser
+  dependency, no DB access. Raises `ValueError` loudly if the selector region
+  isn't found, rather than silently hashing the whole document.
+- `keel_seo.freshness.record(url, html, *, now=None, dry_run=False)` —
+  normalizes + hashes `html`, compares against the `Landing` row's stored
+  `content_hash`, and updates `content_modified_at` **only on a real change**.
+  Idempotent: calling it twice on unchanged output never moves the date a
+  second time. Never touches `updated_at`. Raises `Landing.DoesNotExist` for
+  an unregistered URL.
+- `keel_seo.freshness.freshness_for(url)` — the resolved date, or `None`.
+- `keel_seo.freshness.freshness_schema(url)` — `{"dateModified": "<iso utc>"}`,
+  or `{}` when unknown, ready to merge into a host's own JSON-LD.
+- `python manage.py keel_seo_freshness` — walks every `is_indexable=True`
+  `Landing` row, renders each URL **in-process with the Django test client**
+  (no network, no running server needed) and calls `record()`. Flags:
+  `--dry-run` (report only, write nothing), `--url <path>` (one URL only),
+  `--quiet` (summary line only). A no-op — always exits 0 — when
+  `freshness_enabled` is False, so it's safe to add to a deploy script
+  unconditionally, before the feature is even turned on. Exits non-zero only
+  when a URL failed to render; content merely changing is never a failure.
+- `{% load keel_seo_freshness %}{% last_updated %}` — the public last-updated
+  line: a semantic `<time datetime="...">` (machine-readable UTC ISO-8601)
+  with a human-readable body, always carrying `data-keel-freshness` so it's
+  excluded from its own hash (otherwise the date could never converge).
+  Renders nothing when no date is recorded yet. Override the markup with your
+  own `keel_seo/freshness/last_updated.html` (Django's normal per-app template
+  precedence) — restyle freely, keep the `data-keel-freshness` attribute and
+  the `<time>` element.
+- `LandingSitemap.lastmod` — falls back to `content_modified_at` when the
+  host's `lastmod_hook` supplies no date for a URL, so a host gets accurate
+  `<lastmod>` for free once freshness is enabled. The hook still wins where it
+  answers (it's the documented override for hosts with a better date source).
+
+Config (`KEEL_SEO`, all optional — see `keel_seo/config.py`):
+
+- `freshness_enabled` — opt-in switch (default `False`): the management
+  command renders every indexable URL, so this is only turned on once a host
+  wants that render pass to happen.
+- `freshness_content_selector` — the region to hash. Default `"main"`.
+- `freshness_strip_patterns` — extra `(regex, replacement)` pairs applied on
+  top of `keel_seo.freshness.DEFAULT_STRIP_PATTERNS` before hashing, for
+  volatile substrings specific to a host's own templates. Default `None`
+  (built-ins only).
 
 ## GSC query intelligence (`keel_seo.gsc`, optional)
 
@@ -158,10 +253,14 @@ soft-imported) — no host hook needed for those two.
 
 ## Status
 
-v0.4.0. Consumed by SignalBots (its first host) since v0.1.4: the Landing table is
+v0.6.0. Consumed by SignalBots (its first host) since v0.1.4: the Landing table is
 adopted via the state-only `0001`, the sitemap is composed, the noindex-by-default
 gate is live, and the GSC query registry is in use. Since then: greenfield-capable
 initial migrations (v0.2.0), the GSC Indexing API client (v0.2.1), the
 directory-grouped sitemap engine consumed by signalbots/revenika/martiland
-(v0.3.0), and the `/search-console` dashboard UI — keel-seo's first views/urls/
-templates surface, migrated wholesale from SignalBots' `admin_os` app (v0.4.0).
+(v0.3.0), the `/search-console` dashboard UI — keel-seo's first views/urls/
+templates surface, migrated wholesale from SignalBots' `admin_os` app (v0.4.0) —
+GSC dashboard fixes (v0.4.1, v0.4.2), sitemap directory-index fixes (v0.5.0,
+v0.5.1, v0.5.2), and the content-freshness engine — `keel_seo.freshness`, the
+`keel_seo_freshness` command, the `{% last_updated %}` tag, and the
+`LandingSitemap.lastmod` content-hash fallback (v0.6.0).
