@@ -179,6 +179,8 @@ def intent_registry():
             },
         ],
         "entity_families": {"contract.turbo": ["contract.60-second"]},
+        # Sections where every indexable page must be declared (since v0.7.1).
+        "guarded_prefixes": ["/blog/"],
     }
 ```
 
@@ -197,8 +199,17 @@ The invariants, each with its own code so each has its own fix: `key-shape`,
 `duplicate-key`, `aliased-intent` (two keys resolving to one entity+frame through the
 synonym net — the failure mode where the gate never sees a collision), `owner-missing`,
 `owner-noindex`, `deferral-missing`, `deferral-indexable` (the headline case: a second
-indexable page on an owned intent), `deferral-is-owner`, and `retired-still-present`
-(a withdrawn URL whose Landing row a reseed brought back).
+indexable page on an owned intent), `deferral-is-owner`, `retired-still-present`
+(a withdrawn URL whose Landing row a reseed brought back), and
+`undeclared-in-guarded-section`.
+
+`guarded_prefixes` is the preventive half. Point it at the section that keeps producing
+competitors for pages that already exist — a blog, usually — and every indexable page
+under it must be named somewhere in the registry. A new page there fails the check
+until somebody states which need it answers, and stating that is what makes a
+collision with an existing owner visible *before* the page is written rather than
+after it ranks. Pages outside those prefixes are unaffected, and a noindex page inside
+them needs no entry.
 
 `registry.canonical_owner_for(url)` is the runtime half: what a deferring page renders
 as its "the full treatment lives here" link. The vocabulary — what this site's entities
@@ -306,7 +317,7 @@ soft-imported) — no host hook needed for those two.
 
 ## Status
 
-v0.7.0. Consumed by SignalBots (its first host) since v0.1.4: the Landing table is
+v0.7.1. Consumed by SignalBots (its first host) since v0.1.4: the Landing table is
 adopted via the state-only `0001`, the sitemap is composed, the noindex-by-default
 gate is live, and the GSC query registry is in use. Since then: greenfield-capable
 initial migrations (v0.2.0), the GSC Indexing API client (v0.2.1), the
@@ -318,4 +329,6 @@ v0.5.1, v0.5.2), and the content-freshness engine — `keel_seo.freshness`, the
 `keel_seo_freshness` command, the `{% last_updated %}` tag, and the
 `LandingSitemap.lastmod` content-hash fallback (v0.6.0), and the intent registry —
 `keel_seo.intent` plus the `keel_seo_intent_check` gate, first consumed by
-binaryoption.trading to resolve glossary-versus-pillar cannibalization (v0.7.0).
+binaryoption.trading to resolve glossary-versus-pillar cannibalization (v0.7.0), plus
+`guarded_prefixes`, which requires every indexable page in a named section to declare
+the need it answers so a competitor cannot be written unnoticed (v0.7.1).

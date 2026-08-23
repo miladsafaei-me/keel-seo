@@ -179,3 +179,61 @@ class CommandTests(TestCase):
         out = StringIO()
         call_command("keel_seo_intent_check", "--strict", "--coverage", stdout=out)
         self.assertIn("no violations", out.getvalue())
+
+
+class GuardedSectionTests(TestCase):
+    """A section that keeps producing competitors must declare every page in it."""
+
+    def rows(self, **extra):
+        payload = {
+            "intents": [
+                {
+                    "key": "math.payout@what-is",
+                    "entity": "math.payout",
+                    "frame": "what-is",
+                    "owner": "/tag/payout-percentage",
+                    "retired": ["/blog/how-to-compare-payouts"],
+                }
+            ],
+            "guarded_prefixes": ["/blog/"],
+        }
+        payload.update(extra)
+        return payload
+
+    def test_an_undeclared_indexable_page_in_the_section_is_flagged(self):
+        landings = {"/tag/payout-percentage": True, "/blog/some-new-post": True}
+        violations = check(build_registry(self.rows()), landings=landings)
+        self.assertEqual([v.code for v in violations], ["undeclared-in-guarded-section"])
+        self.assertEqual(violations[0].url, "/blog/some-new-post")
+
+    def test_a_declared_page_in_the_section_passes(self):
+        rows = self.rows()
+        rows["intents"].append(
+            {
+                "key": "asset.selection@how-to",
+                "entity": "asset.selection",
+                "frame": "how-to",
+                "owner": "/blog/how-to-choose-an-asset",
+            }
+        )
+        landings = {"/tag/payout-percentage": True, "/blog/how-to-choose-an-asset": True}
+        self.assertEqual(check(build_registry(rows), landings=landings), [])
+
+    def test_a_noindex_page_in_the_section_needs_no_entry(self):
+        landings = {"/tag/payout-percentage": True, "/blog/draft-post": False}
+        self.assertEqual(check(build_registry(self.rows()), landings=landings), [])
+
+    def test_pages_outside_the_section_are_untouched(self):
+        landings = {"/tag/payout-percentage": True, "/news/anything": True}
+        self.assertEqual(check(build_registry(self.rows()), landings=landings), [])
+
+    def test_no_guarded_prefixes_means_no_such_check(self):
+        rows = self.rows()
+        rows.pop("guarded_prefixes")
+        landings = {"/tag/payout-percentage": True, "/blog/some-new-post": True}
+        self.assertEqual(check(build_registry(rows), landings=landings), [])
+
+    def test_the_section_root_itself_counts_as_inside_it(self):
+        landings = {"/tag/payout-percentage": True, "/blog/": True}
+        codes = [v.code for v in check(build_registry(self.rows()), landings=landings)]
+        self.assertEqual(codes, ["undeclared-in-guarded-section"])

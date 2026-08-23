@@ -36,6 +36,13 @@ callable returning either a list of intent dicts or a mapping::
         "entity_families": {
             "contract.turbo": ["contract.60-second", "contract.30-second"],
         },
+        # Optional. URL prefixes where every indexable page must appear somewhere in
+        # the registry -- as an owner, a deferral or a retirement. Use it on the
+        # section that keeps producing competitors for pages that already exist: a new
+        # page there fails the check until somebody states which need it answers, and
+        # stating that is what makes a collision with an existing owner visible before
+        # the page is written rather than after it ranks.
+        "guarded_prefixes": ["/blog/"],
     }
 
 ``keel_seo_intent_check`` then enforces the invariants against the live ``Landing``
@@ -65,6 +72,7 @@ CODES = (
     "deferral-indexable",
     "deferral-is-owner",
     "retired-still-present",
+    "undeclared-in-guarded-section",
 )
 
 
@@ -99,6 +107,7 @@ class Registry:
 
     intents: tuple = ()
     entity_families: dict = field(default_factory=dict)
+    guarded_prefixes: tuple = ()
 
     def by_key(self) -> dict:
         return {i.key: i for i in self.intents}
@@ -120,6 +129,16 @@ class Registry:
         """
         deferrals = self.deferrals_of(url)
         return deferrals[0].owner if deferrals else ""
+
+    def mentions(self, url: str) -> bool:
+        """Does any entry name this URL at all, in any role?"""
+        u = _norm_url(url)
+        for intent in self.intents:
+            if _norm_url(intent.owner) == u:
+                return True
+            if u in {_norm_url(d) for d in intent.defers + intent.retired}:
+                return True
+        return False
 
     def family_of(self, entity: str) -> str:
         """The canonical entity for ``entity`` after the synonym net is applied."""
@@ -158,8 +177,9 @@ def build_registry(payload) -> Registry:
     if isinstance(payload, dict):
         raw_intents = payload.get("intents") or []
         raw_families = payload.get("entity_families") or {}
+        guarded = tuple(payload.get("guarded_prefixes") or ())
     else:
-        raw_intents, raw_families = list(payload), {}
+        raw_intents, raw_families, guarded = list(payload), {}, ()
 
     families = {}
     for canonical, aliases in raw_families.items():
@@ -184,7 +204,7 @@ def build_registry(payload) -> Registry:
         )
         for row in raw_intents
     )
-    return Registry(intents=intents, entity_families=families)
+    return Registry(intents=intents, entity_families=families, guarded_prefixes=guarded)
 
 
 def _landing_map(landings):
@@ -304,6 +324,28 @@ def check(registry=None, *, landings=None) -> list:
                         url=withdrawn,
                     )
                 )
+
+    # A guarded section is one that keeps producing competitors for pages that already
+    # exist. Requiring every indexable URL under it to be declared turns "somebody
+    # wrote another post about the payout percentage" from something noticed months
+    # later into a failing check on the day it lands.
+    for url, indexable in sorted(landings.items()):
+        if not indexable:
+            continue
+        if not any(url.startswith(_norm_url(p).rstrip("/") + "/") or url == _norm_url(p)
+                   for p in registry.guarded_prefixes):
+            continue
+        if registry.mentions(url):
+            continue
+        violations.append(
+            Violation(
+                "undeclared-in-guarded-section",
+                "indexable and in a guarded section, but no registry entry names it -- "
+                "state which need it answers, and whether a landing already owns that "
+                "need, before it goes live",
+                url=url,
+            )
+        )
 
     return violations
 
