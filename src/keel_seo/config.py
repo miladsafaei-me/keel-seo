@@ -64,6 +64,14 @@ key is optional and the defaults make the package work standalone:
         # URL name an authenticated-but-not-superuser visitor is redirected to.
         # Default None raises Django's standard PermissionDenied (403) instead.
         "gsc_forbidden_redirect": "core:home",
+
+        # ---- keel_seo.intent (one query intent, one canonical URL) ----
+        # Dotted path to a callable returning this site's intent registry: which
+        # single URL owns each query need, and which other URLs touch it and must
+        # therefore stay noindex. See keel_seo/intent.py for the payload shape and
+        # `manage.py keel_seo_intent_check --strict` for the gate. Default None →
+        # empty registry, every check trivially passes, nothing is enforced.
+        "intent_registry_hook": "core.seo_intents.intent_registry",
     }
 """
 from django.conf import settings
@@ -85,6 +93,7 @@ _DEFAULTS = {
     "gsc_queue_list_url_name": None,
     "gsc_plan_edit_url_name": None,
     "gsc_forbidden_redirect": None,
+    "intent_registry_hook": None,
 }
 
 

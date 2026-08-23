@@ -25,6 +25,9 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
 - `keel_seo.freshness` (since v0.6.0) — the content-freshness engine: a real,
   non-fabricated `dateModified`/`lastmod` per URL, driven by hashing each page's
   rendered content rather than trusting `updated_at`. See below.
+- `keel_seo.intent` (since v0.7.0) — the anti-cannibalization gate: a host-declared
+  registry of query intents, one canonical owning URL each, enforced against the live
+  Landing table by `manage.py keel_seo_intent_check --strict`. See below.
 
 ## Consume it (host wiring)
 
@@ -151,6 +154,56 @@ Config (`KEEL_SEO`, all optional — see `keel_seo/config.py`):
   volatile substrings specific to a host's own templates. Default `None`
   (built-ins only).
 
+## Intent registry (`keel_seo.intent`)
+
+Two pages competing for one search need is an architecture defect that only becomes
+visible once both are long enough to be plausible answers — and by then the fix is a
+redirect, not an edit. The registry makes the ownership call explicit and checkable
+before that point.
+
+A host declares, per query need, the one URL allowed to answer it:
+
+```python
+# core/seo_intents.py
+def intent_registry():
+    return {
+        "intents": [
+            {
+                "key": "contract.high-low@what-is",   # <entity>@<frame>
+                "entity": "contract.high-low",
+                "frame": "what-is",
+                "owner": "/instruments/high-low",     # the one indexable answer
+                "label": "What a high/low binary option is and how it settles",
+                "defers": ["/tag/call-option"],       # live spokes; must be noindex
+                "retired": ["/tag/high-low-contract"], # withdrawn; must be gone + 301
+            },
+        ],
+        "entity_families": {"contract.turbo": ["contract.60-second"]},
+    }
+```
+
+```python
+KEEL_SEO = {"intent_registry_hook": "core.seo_intents.intent_registry"}
+```
+
+Then:
+
+```bash
+python manage.py keel_seo_intent_check --strict     # deploy + CI gate
+python manage.py keel_seo_intent_check --coverage   # indexable URLs not yet declared
+```
+
+The invariants, each with its own code so each has its own fix: `key-shape`,
+`duplicate-key`, `aliased-intent` (two keys resolving to one entity+frame through the
+synonym net — the failure mode where the gate never sees a collision), `owner-missing`,
+`owner-noindex`, `deferral-missing`, `deferral-indexable` (the headline case: a second
+indexable page on an owned intent), `deferral-is-owner`, and `retired-still-present`
+(a withdrawn URL whose Landing row a reseed brought back).
+
+`registry.canonical_owner_for(url)` is the runtime half: what a deferring page renders
+as its "the full treatment lives here" link. The vocabulary — what this site's entities
+and frames are — belongs to the host; the invariants and the gate live here.
+
 ## GSC query intelligence (`keel_seo.gsc`, optional)
 
 A headless Google Search Console connector plus a persistent query registry — the
@@ -253,7 +306,7 @@ soft-imported) — no host hook needed for those two.
 
 ## Status
 
-v0.6.0. Consumed by SignalBots (its first host) since v0.1.4: the Landing table is
+v0.7.0. Consumed by SignalBots (its first host) since v0.1.4: the Landing table is
 adopted via the state-only `0001`, the sitemap is composed, the noindex-by-default
 gate is live, and the GSC query registry is in use. Since then: greenfield-capable
 initial migrations (v0.2.0), the GSC Indexing API client (v0.2.1), the
@@ -263,4 +316,6 @@ templates surface, migrated wholesale from SignalBots' `admin_os` app (v0.4.0) �
 GSC dashboard fixes (v0.4.1, v0.4.2), sitemap directory-index fixes (v0.5.0,
 v0.5.1, v0.5.2), and the content-freshness engine — `keel_seo.freshness`, the
 `keel_seo_freshness` command, the `{% last_updated %}` tag, and the
-`LandingSitemap.lastmod` content-hash fallback (v0.6.0).
+`LandingSitemap.lastmod` content-hash fallback (v0.6.0), and the intent registry —
+`keel_seo.intent` plus the `keel_seo_intent_check` gate, first consumed by
+binaryoption.trading to resolve glossary-versus-pillar cannibalization (v0.7.0).
