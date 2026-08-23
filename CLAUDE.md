@@ -16,13 +16,17 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
   robots-meta partial, cache-invalidation signals, `categorize_landing`, the
   `gen_critical_css.js` engine, `keel_seo.freshness` (since v0.6.0: the content-hashing
   freshness engine, the `keel_seo_freshness` command, the `{% last_updated %}` tag —
-  see README's "Content freshness" section), and `keel_seo.gsc` — the connector, query
+  see README's "Content freshness" section), `keel_seo.intent` (since v0.7.0: the
+  one-intent-one-URL registry, its nine invariants and the `keel_seo_intent_check`
+  gate; `guarded_prefixes` since v0.7.1), and `keel_seo.gsc` — the connector, query
   registry, Indexing API client, and (since v0.4.0) the `/search-console` dashboard UI
   (`gsc/{build,live,dashboard,views,urls}.py` + `templates/keel_seo/gsc/` +
   `static/keel_seo/gsc/`): pure data transforms, the live-API path, context
   building/insight dismissals, and the routes. Mount with
   `include("keel_seo.gsc.urls")`.
-- **Stays in the host (Bucket-0):** any dynamic-freshness computation *the host wants
+- **Stays in the host (Bucket-0):** the intent *vocabulary* — what this site's
+  entities and frames are, which URL owns which need — because nothing generic can
+  guess it; keel-seo owns the invariants and the gate, never the entries. any dynamic-freshness computation *the host wants
   to override* (wired via `KEEL_SEO["lastmod_hook"]` — `LandingSitemap.lastmod` falls
   back to `keel_seo.freshness`'s `content_modified_at` when the hook has nothing), the
   content sitemaps (blog/news/archives — those live in the content package),
@@ -56,6 +60,7 @@ fork of this code.
 | `KEEL_SEO["gsc_queue_list_url_name"]` | `config.gsc_queue_list_url` | none → no link | reverse()-able URL name, no args |
 | `KEEL_SEO["gsc_plan_edit_url_name"]` | `gsc/views.queue` | none → no link | reverse()-able URL name, `args=[pk]` |
 | `KEEL_SEO["gsc_forbidden_redirect"]` | `gsc/views._forbidden` | none → Django 403 | reverse()-able URL name |
+| `KEEL_SEO["intent_registry_hook"]` | `intent.load_registry` | none → empty registry, nothing enforced | `() -> {"intents": [...], "entity_families": {...}, "guarded_prefixes": [...]}` |
 
 ## Tests
 
