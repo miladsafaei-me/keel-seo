@@ -24,10 +24,10 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
   `static/keel_seo/gsc/`): pure data transforms, the live-API path, context
   building/insight dismissals, and the routes. Mount with
   `include("keel_seo.gsc.urls")`.
-- **Stays in the host (Bucket-0):** the intent *vocabulary* — what this site's
-  entities and frames are, which URL owns which need — because nothing generic can
-  guess it; keel-seo owns the invariants and the gate, never the entries. any dynamic-freshness computation *the host wants
-  to override* (wired via `KEEL_SEO["lastmod_hook"]` — `LandingSitemap.lastmod` falls
+- **Stays in the host (Bucket-0):** the intent *vocabulary* — what a site's entities
+  and frames are, and which URL owns which need — because nothing generic can guess it;
+  keel-seo owns the invariants and the gate, never the entries. Also any
+  dynamic-freshness computation *the host wants to override* (wired via `KEEL_SEO["lastmod_hook"]` — `LandingSitemap.lastmod` falls
   back to `keel_seo.freshness`'s `content_modified_at` when the hook has nothing), the
   content sitemaps (blog/news/archives — those live in the content package),
   `extract_critical_css.js`, the per-project critical-CSS `PAGES`/`CHROME` manifest,
