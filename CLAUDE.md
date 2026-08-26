@@ -19,7 +19,8 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
   see README's "Content freshness" section), `keel_seo.intent` (since v0.7.0: the
   one-intent-one-URL registry, its nine invariants and the `keel_seo_intent_check`
   gate; `guarded_prefixes` since v0.7.1), and `keel_seo.gsc` — the connector, query
-  registry, Indexing API client, and (since v0.4.0) the `/search-console` dashboard UI
+  registry, Indexing API client, the recurring `pulse` measurement engine (since
+  v0.8.0), and (since v0.4.0) the `/search-console` dashboard UI
   (`gsc/{build,live,dashboard,views,urls}.py` + `templates/keel_seo/gsc/` +
   `static/keel_seo/gsc/`): pure data transforms, the live-API path, context
   building/insight dismissals, and the routes. Mount with

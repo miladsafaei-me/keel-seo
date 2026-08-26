@@ -247,6 +247,31 @@ The registry writes `registry.json` (the store), `registry.csv`, and dated
 scope vocabulary, market tagging, taxonomy — is host business logic and stays in
 the consuming project; this package owns only the neutral connector + registry.
 
+### Recurring measurement (`keel_seo.gsc.pulse`)
+
+Answers "what changed since last time" for one property, without the traps that make
+a naive before/after read wrong. Site totals come from the complete `date` dimension
+(the query dimension withholds a different share in each window); position is reported
+unweighted over the matched keyword set (the impression-weighted average *improves*
+when a site loses keywords); every CTR cohort is gated at a minimum impression count
+(CTR is unreadable on a handful of impressions).
+
+```
+python -m keel_seo.gsc.pulse --days 28                     # this window vs the one before
+python -m keel_seo.gsc.pulse --days 14 --end 2026-08-24    # a fixed span, e.g. straddling an event
+python -m keel_seo.gsc.pulse --days 28 --content-prefixes blog,news
+```
+
+It writes `<end>-facts.json` and appends `history.json` under `--out-dir`, diffing the
+previous run into `facts["vs_previous_run"]`. Windows resolve from the last **finalised**
+day, never from today, and are recorded in `facts.meta`; the pull is cached, so two runs
+on one cache are byte-identical. `--content-prefixes` names the directories whose
+children are single articles (`blog`, `news`, a glossary) so the page-family rollup
+groups them instead of listing every post.
+
+It measures and writes JSON; it never interprets. The `/seo-pulse` skill in **keel-kit**
+carries the reading rules, the finding→action playbook and the report it publishes.
+
 ### Google Indexing API (`keel_seo.gsc.indexing`)
 
 Submits URL-update / URL-delete notifications so freshly-published pages get
