@@ -4,8 +4,9 @@
 Reads the **shape of a property's search performance over a span** — 90 days by
 default — and then, inside that span, one deep before/after window. The trend is the
 frame on purpose: a window pair answers "what changed", but only the trend says
-whether that change is a step, a drift, or last week's weather. Week-over-week and a
-rolling 30-vs-30 are always computed, because those are what a human actually reads.
+whether that change is a step, a drift, or last week's weather. Week-over-week and a month-sized
+pair are always computed, because those are what a human actually reads — the month is
+28 days, not 30, so both halves hold the same number of each weekday.
 
 Deterministic half of the ``/seo-pulse`` skill: it runs no model, and every figure it
 writes can be re-derived from its cache. Two runs on one cache are byte-identical.
@@ -341,12 +342,15 @@ def main():
                 f"the previous span has {pr['days']} of {days_back} days of data — "
                 "the property did not exist across all of it")
         return out
-    spans = sorted({7, n, 30, a.trend_days})
+    # Every span is a multiple of 7. A 30-day comparison reads naturally to a human and
+    # is quietly wrong: 30 is not a multiple of 7, so each window counts two weekdays
+    # three times and a site with weekday shape moves by a few points on its own.
+    spans = sorted({7, n, a.trend_days})
     F["rolling_comparisons"] = [pair(s) for s in spans]
-    F["rolling_30_vs_30"] = pair(30)
-    F["rolling_30_vs_30"]["weekday_note"] = (
-        "30 is not a multiple of 7, so each window counts two weekdays three times — "
-        "read it for the size of a move, and the 28-day pair for whether the move is real")
+    F["monthly_pair"] = pair(n)
+    F["monthly_pair"]["note"] = (
+        f"the month-sized comparison, at {n} days rather than 30, so both windows hold "
+        "the same number of each weekday")
 
     # ---- week over week, every complete week in the span, always reported
     F["week_over_week"] = [
@@ -621,12 +625,12 @@ def main():
     hist_path = out_dir / "history.json"
     hist = json.loads(hist_path.read_text()) if hist_path.exists() else []
     hist = [h for h in hist if h.get("end") != end]
-    r30 = F["rolling_30_vs_30"]
+    mp = F["monthly_pair"]
     hist.append({"end": end, "window_days": n, "trend_days": a.trend_days,
                  "trend_direction": F["trend"]["direction"],
                  "trend_net_change_pct": F["trend"]["net_change_pct"],
-                 "clicks_day_30d": r30["current"]["clicks_day"],
-                 "clicks_day_30d_delta_pct": r30["delta_pct"]["clicks_day"],
+                 "clicks_day_month": mp["current"]["clicks_day"],
+                 "clicks_day_month_delta_pct": mp["delta_pct"]["clicks_day"],
                  "clicks_day": sc["clicks_day"], "impr_day": sc["impr_day"],
                  "ctr": sc["ctr"], "urls_with_any_click": F["page_inventory"]["current"]["urls_with_any_click"],
                  "zero_click_pct": F["page_inventory"]["current"]["zero_click_pct"],

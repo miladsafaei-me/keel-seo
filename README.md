@@ -254,7 +254,7 @@ then, inside it, one deep before/after window. The trend is the frame on purpose
 window pair answers "what changed", but only the trend says whether that change is a
 step, a drift, or last week's weather, and the two often disagree (a site can be up on
 the quarter and falling this month — `trend.directions_disagree` says so out loud).
-Week-over-week and a rolling 30-vs-30 are always computed, because those are what a
+Week-over-week and a month-sized pair are always computed, because those are what a
 human actually reads. All of it avoids the traps that make a naive before/after wrong. Site totals come from the complete `date` dimension
 (the query dimension withholds a different share in each window); position is reported
 unweighted over the matched keyword set (the impression-weighted average *improves*
@@ -272,7 +272,9 @@ What it writes about the trend: `trend` (direction from a 28-day trailing mean, 
 change, best and worst week, the largest week-over-week break, a single-breakpoint
 `level_shift`, and `recent_4_weeks` beside the span so the two directions can be
 compared), `week_over_week` for every complete week, `rolling_comparisons` for 7 / the
-window / 30 / the trend span, and `rolling_30_vs_30` on its own. A span the property is
+window / the trend span, and `monthly_pair` on its own. Every span is a multiple of 7:
+a 30-day comparison reads naturally and is quietly wrong, because each window would
+count two weekdays three times. A span the property is
 too young to fill is marked `partial_history`, and any comparison whose previous span
 is mostly missing is marked `comparable: false` instead of being reported as a result —
 a launch ramp otherwise reads as "+34,091%".
