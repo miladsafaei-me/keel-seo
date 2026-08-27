@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """Recurring Search Console measurement — rolling windows, de-biased.
 
-Answers "what changed since last time" for one property, and is the deterministic
-half of the ``/seo-pulse`` skill: it runs no model, and every figure it writes can
-be re-derived from its cache. Two runs on one cache are byte-identical.
+Reads the **shape of a property's search performance over a span** — 90 days by
+default — and then, inside that span, one deep before/after window. The trend is the
+frame on purpose: a window pair answers "what changed", but only the trend says
+whether that change is a step, a drift, or last week's weather. Week-over-week and a
+rolling 30-vs-30 are always computed, because those are what a human actually reads.
+
+Deterministic half of the ``/seo-pulse`` skill: it runs no model, and every figure it
+writes can be re-derived from its cache. Two runs on one cache are byte-identical.
 
     export GSC_SITE=sc-domain:example.com
     export GSC_CREDENTIALS=~/.config/keel-seo/service-account.json
-    python -m keel_seo.gsc.pulse --days 28 --out-dir docs/seo/pulse
+    python -m keel_seo.gsc.pulse --trend-days 90 --days 28 --out-dir docs/seo/pulse
 
-Windows are resolved from the last **finalised** day (Search Console lags 2-3 days),
-never from today, and are written into the output so a number can always be traced
-back to its span. ``dataState=final`` throughout.
+Every span — the trend, each rolling comparison, the deep window — is resolved from the
+last **finalised** day (Search Console lags 2-3 days), never from today, and is written
+into the output so a number can always be traced back to its dates. ``dataState=final``
+throughout.
 
 What it measures, and why each one is shaped the way it is: site totals come from the
 complete ``date`` dimension because the query dimension withholds a *different* share
@@ -161,11 +167,13 @@ def fetch(cache: Path, cur, prev, hist_start, end):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--days", type=int, default=28, help="length of each window (>=28 keeps weekday noise out)")
+    ap.add_argument("--trend-days", type=int, default=90,
+                    help="the trend span, and the primary frame of a run: how far back the shape is read")
+    ap.add_argument("--days", type=int, default=28,
+                    help="the deep-analysis window inside that trend (>=28, a multiple of 7 keeps weekday noise out)")
     ap.add_argument("--end", default=None, help="last day of the current window (default: last finalised day)")
     ap.add_argument("--out-dir", default="docs/seo/pulse")
     ap.add_argument("--cache", default=None, help="default: $GSC_CACHE_DIR (else ~/.cache/keel-seo-gsc) + /pulse-<end>-<days>d")
-    ap.add_argument("--history-days", type=int, default=180, help="daily site series length")
     ap.add_argument("--content-prefixes", default="",
                     help="comma-separated first segments whose children are single articles, e.g. blog,news")
     a = ap.parse_args()
@@ -180,14 +188,20 @@ def main():
     n = a.days
     cur = ((e - dt.timedelta(days=n - 1)).isoformat(), e.isoformat())
     prev = ((e - dt.timedelta(days=2 * n - 1)).isoformat(), (e - dt.timedelta(days=n)).isoformat())
-    hist_start = (e - dt.timedelta(days=a.history_days - 1)).isoformat()
+    # daily rows are one per day and cost nothing, so pull enough to compare every
+    # rolling window against its own predecessor — including trend-vs-previous-trend.
+    hist_days = max(2 * a.trend_days, 4 * n, 180)
+    hist_start = (e - dt.timedelta(days=hist_days - 1)).isoformat()
+    trend_start = (e - dt.timedelta(days=a.trend_days - 1)).isoformat()
     cache = Path(a.cache or os.path.expanduser(os.environ.get("GSC_CACHE_DIR", "~/.cache/keel-seo-gsc") + f"/pulse-{end}-{n}d"))
     raw = fetch(cache, cur, prev, hist_start, end)
 
-    F = {"meta": {"site": SITE, "generated_for_end_date": end, "window_days": n,
-                  "current": cur, "previous": prev, "history_from": hist_start,
-                  "data_state": "final", "cache": str(cache),
-                  "content_prefixes": sorted(prefixes)}}
+    F = {"meta": {"site": SITE, "generated_for_end_date": end,
+                  "trend_days": a.trend_days, "trend": [trend_start, end],
+                  "window_days": n, "current": cur, "previous": prev,
+                  "history_from": hist_start, "data_state": "final", "cache": str(cache),
+                  "content_prefixes": sorted(prefixes),
+                  "frame": "the trend is the primary reading; the window pair below is one slice of it"}}
 
     # ---- site level from the date dimension: the only dimension with no withholding
     daily = {r["keys"][0]: r for r in raw["daily_web"]}
@@ -206,16 +220,144 @@ def main():
     img = {r["keys"][0]: r for r in raw["daily_image"]}
     F["image_search"] = {"current": win(img, *cur), "previous": win(img, *prev)}
     F["daily_series"] = [{"date": k, "clicks": v["clicks"], "impressions": v["impressions"]}
-                         for k, v in sorted(daily.items())]
+                         for k, v in sorted(daily.items()) if k >= trend_start]
     weekly = defaultdict(lambda: {"clicks": 0, "impressions": 0, "days": 0})
     for k, v in sorted(daily.items()):
         wk = (dt.date.fromisoformat(k) - dt.timedelta(days=dt.date.fromisoformat(k).weekday())).isoformat()
         weekly[wk]["clicks"] += v["clicks"]; weekly[wk]["impressions"] += v["impressions"]; weekly[wk]["days"] += 1
-    F["weekly_series"] = [{"week_start": k, "days": v["days"],
-                           "clicks_day": round(v["clicks"] / v["days"], 1),
-                           "impr_day": round(v["impressions"] / v["days"], 1),
-                           "ctr": round(v["clicks"] / v["impressions"] * 100, 2) if v["impressions"] else 0}
-                          for k, v in sorted(weekly.items())]
+    ALLWEEKS = [{"week_start": k, "days": v["days"],
+                 "clicks_day": round(v["clicks"] / v["days"], 1),
+                 "impr_day": round(v["impressions"] / v["days"], 1),
+                 "ctr": round(v["clicks"] / v["impressions"] * 100, 2) if v["impressions"] else 0}
+                for k, v in sorted(weekly.items())]
+    F["weekly_series"] = [w for w in ALLWEEKS if w["week_start"] >= trend_start]
+
+    first_day = min(daily) if daily else end
+    # ---- THE TREND: the primary frame. A window pair answers "what changed"; only the
+    # ---- trend says whether that change is a step, a drift, or last week's weather.
+    WK = [w for w in F["weekly_series"] if w["days"] == 7]     # complete weeks only
+    def trailing_mean(series, days_back):
+        """Trailing means smooth the weekday shape out of a daily series."""
+        out, keys = [], sorted(daily)
+        for idx, k in enumerate(keys):
+            if k < trend_start or idx + 1 < days_back: continue
+            sel = [daily[x] for x in keys[idx + 1 - days_back:idx + 1]]
+            out.append({"date": k,
+                        "clicks_day": round(sum(x["clicks"] for x in sel) / days_back, 1),
+                        "impr_day": round(sum(x["impressions"] for x in sel) / days_back, 1)})
+        return out
+    MA = trailing_mean(daily, 28)
+
+    def slope(vals):
+        """Least squares on the index. Units: change per step of the input series."""
+        m = len(vals)
+        if m < 3: return 0.0
+        mx = (m - 1) / 2; my = sum(vals) / m
+        den = sum((x - mx) ** 2 for x in range(m))
+        return sum((x - mx) * (y - my) for x, y in zip(range(m), vals)) / den if den else 0.0
+
+    ma_clicks = [d["clicks_day"] for d in MA]
+    per_day = slope(ma_clicks)
+    span_change = per_day * (len(ma_clicks) - 1) if ma_clicks else 0
+    base = sum(ma_clicks) / len(ma_clicks) if ma_clicks else 0
+    direction = ("flat" if not base or abs(span_change) < 0.10 * base
+                 else "rising" if span_change > 0 else "falling")
+
+    # single-breakpoint detector: the week whose before/after means differ most. It names
+    # where the level moved; it does not explain why, and two breaks read as one.
+    brk = None
+    if len(WK) >= 6:
+        cands = []
+        for s in range(2, len(WK) - 1):
+            b = sum(w["clicks_day"] for w in WK[:s]) / s
+            a2 = sum(w["clicks_day"] for w in WK[s:]) / (len(WK) - s)
+            cands.append((abs(a2 - b), s, round(b, 1), round(a2, 1)))
+        gap, s, b, a2 = max(cands)
+        brk = {"week_start": WK[s]["week_start"], "mean_clicks_day_before": b,
+               "mean_clicks_day_after": a2, "step": round(a2 - b, 1),
+               "step_pct": round((a2 - b) / b * 100, 1) if b else None,
+               "note": "the largest single level shift in the span, not proof of a cause"}
+
+    jumps = [{"week_start": WK[k]["week_start"], "delta_clicks_day": round(WK[k]["clicks_day"] - WK[k - 1]["clicks_day"], 1)}
+             for k in range(1, len(WK))]
+    partial = first_day > trend_start
+    F["trend"] = {
+        "span": [trend_start, end], "days": a.trend_days,
+        "first_day_with_data": first_day,
+        "partial_history": partial,
+        "partial_history_note": (
+            "the property has no data before " + first_day + ", so this span opens on a ramp "
+            "from launch: direction and net change describe growing into the index, not "
+            "performance. Read the recent weeks and the window pair instead." if partial else None),
+        "complete_weeks": len(WK),
+        "direction": direction,
+        "clicks_day_first_week": WK[0]["clicks_day"] if WK else None,
+        "clicks_day_last_week": WK[-1]["clicks_day"] if WK else None,
+        "net_change_pct": (round((WK[-1]["clicks_day"] - WK[0]["clicks_day"]) / WK[0]["clicks_day"] * 100, 1)
+                           if WK and WK[0]["clicks_day"] else None),
+        "smoothed_change_over_span": round(span_change, 1),
+        "smoothed_change_per_week": round(per_day * 7, 2),
+        "best_week": max(WK, key=lambda w: w["clicks_day"]) if WK else None,
+        "worst_week": min(WK, key=lambda w: w["clicks_day"]) if WK else None,
+        "largest_week_break": max(jumps, key=lambda x: abs(x["delta_clicks_day"])) if jumps else None,
+        "level_shift": brk,
+        "moving_average_28d": MA,
+        "note": "direction comes from the 28-day trailing mean, so one loud week cannot set it"}
+
+    # A span direction and a recent direction disagree often — a site can be up on the
+    # quarter and falling this month. Reporting only one of them is how a run misleads.
+    RECENT = WK[-4:]
+    if len(RECENT) >= 3:
+        rs = slope([w["clicks_day"] for w in RECENT])
+        rbase = sum(w["clicks_day"] for w in RECENT) / len(RECENT)
+        rchange = rs * (len(RECENT) - 1)
+        F["trend"]["recent_4_weeks"] = {
+            "weeks": [w["week_start"] for w in RECENT],
+            "clicks_day_first": RECENT[0]["clicks_day"], "clicks_day_last": RECENT[-1]["clicks_day"],
+            "change_pct": (round((RECENT[-1]["clicks_day"] - RECENT[0]["clicks_day"]) / RECENT[0]["clicks_day"] * 100, 1)
+                           if RECENT[0]["clicks_day"] else None),
+            "direction": ("flat" if not rbase or abs(rchange) < 0.10 * rbase
+                          else "rising" if rchange > 0 else "falling")}
+        F["trend"]["directions_disagree"] = (
+            F["trend"]["recent_4_weeks"]["direction"] != direction
+            and "flat" not in (F["trend"]["recent_4_weeks"]["direction"], direction))
+
+    # ---- rolling comparisons: every span against its own predecessor, always reported.
+    # ---- 7 and 30 are what a human reads; 28 and the trend span are what survives review.
+    def pair(days_back):
+        c0 = (e - dt.timedelta(days=days_back - 1)).isoformat()
+        p0 = (e - dt.timedelta(days=2 * days_back - 1)).isoformat()
+        p1 = (e - dt.timedelta(days=days_back)).isoformat()
+        c, pr = win(daily, c0, end), win(daily, p0, p1)
+        # a previous span the property barely existed in produces a true percentage and a
+        # false statement, so it is marked rather than printed as a result
+        comparable = pr["days"] >= days_back * 0.8 and c["days"] >= days_back * 0.8
+        out = {"span_days": days_back, "current_range": [c0, end], "previous_range": [p0, p1],
+               "current": c, "previous": pr, "comparable": comparable,
+               "delta_pct": {k: (round((c[k] - pr[k]) / pr[k] * 100, 1) if pr[k] else None)
+                             for k in ("clicks_day", "impr_day", "ctr")}}
+        if not comparable:
+            out["not_comparable_because"] = (
+                f"the previous span has {pr['days']} of {days_back} days of data — "
+                "the property did not exist across all of it")
+        return out
+    spans = sorted({7, n, 30, a.trend_days})
+    F["rolling_comparisons"] = [pair(s) for s in spans]
+    F["rolling_30_vs_30"] = pair(30)
+    F["rolling_30_vs_30"]["weekday_note"] = (
+        "30 is not a multiple of 7, so each window counts two weekdays three times — "
+        "read it for the size of a move, and the 28-day pair for whether the move is real")
+
+    # ---- week over week, every complete week in the span, always reported
+    F["week_over_week"] = [
+        {"week_start": WK[k]["week_start"], "clicks_day": WK[k]["clicks_day"],
+         "impr_day": WK[k]["impr_day"], "ctr": WK[k]["ctr"],
+         "delta_clicks_day": round(WK[k]["clicks_day"] - WK[k - 1]["clicks_day"], 1) if k else None,
+         "delta_clicks_pct": (round((WK[k]["clicks_day"] - WK[k - 1]["clicks_day"]) / WK[k - 1]["clicks_day"] * 100, 1)
+                              if k and WK[k - 1]["clicks_day"] else None),
+         "delta_impr_pct": (round((WK[k]["impr_day"] - WK[k - 1]["impr_day"]) / WK[k - 1]["impr_day"] * 100, 1)
+                            if k and WK[k - 1]["impr_day"] else None)}
+        for k in range(len(WK))]
 
     # ---- how much of the truth the query dimension shows (it differs by window)
     pqc = [r for r in raw["pq_cur"] if not JUNK.search(r["keys"][1])]
@@ -462,6 +604,8 @@ def main():
         os_, ns = old.get("site", {}).get("current", {}), F["site"]["current"]
         F["vs_previous_run"] = {"previous_run_end": old.get("meta", {}).get("generated_for_end_date"),
             "previous_run_file": prior[-1].name,
+            "trend_direction": [old.get("trend", {}).get("direction"), F["trend"]["direction"]],
+            "trend_net_change_pct": [old.get("trend", {}).get("net_change_pct"), F["trend"]["net_change_pct"]],
             "clicks_day": [os_.get("clicks_day"), ns["clicks_day"]],
             "impr_day": [os_.get("impr_day"), ns["impr_day"]],
             "ctr": [os_.get("ctr"), ns["ctr"]],
@@ -477,7 +621,13 @@ def main():
     hist_path = out_dir / "history.json"
     hist = json.loads(hist_path.read_text()) if hist_path.exists() else []
     hist = [h for h in hist if h.get("end") != end]
-    hist.append({"end": end, "window_days": n, "clicks_day": sc["clicks_day"], "impr_day": sc["impr_day"],
+    r30 = F["rolling_30_vs_30"]
+    hist.append({"end": end, "window_days": n, "trend_days": a.trend_days,
+                 "trend_direction": F["trend"]["direction"],
+                 "trend_net_change_pct": F["trend"]["net_change_pct"],
+                 "clicks_day_30d": r30["current"]["clicks_day"],
+                 "clicks_day_30d_delta_pct": r30["delta_pct"]["clicks_day"],
+                 "clicks_day": sc["clicks_day"], "impr_day": sc["impr_day"],
                  "ctr": sc["ctr"], "urls_with_any_click": F["page_inventory"]["current"]["urls_with_any_click"],
                  "zero_click_pct": F["page_inventory"]["current"]["zero_click_pct"],
                  "striking_distance_n": F["striking_distance_total"]["n"],
@@ -485,8 +635,27 @@ def main():
     hist.sort(key=lambda h: h["end"])
     hist_path.write_text(json.dumps(hist, indent=1))
     print(f"wrote {out} ({out.stat().st_size} bytes) and {hist_path} ({len(hist)} runs)")
-    print(f"window {cur[0]}..{cur[1]} vs {prev[0]}..{prev[1]}  "
-          f"clicks/day {sp['clicks_day']} -> {sc['clicks_day']} ({F['site']['delta_pct']['clicks_day']}%)")
+    tr = F["trend"]
+    print(f"trend {tr['span'][0]}..{tr['span'][1]} ({tr['days']}d): {tr['direction']}, "
+          f"{tr['clicks_day_first_week']} -> {tr['clicks_day_last_week']} clicks/day by week "
+          f"({tr['net_change_pct']}%)")
+    if tr["partial_history"]:
+        print(f"  PARTIAL: no data before {tr['first_day_with_data']} — this span opens on the launch ramp")
+    if tr.get("recent_4_weeks"):
+        r4 = tr["recent_4_weeks"]
+        flag = "  <-- disagrees with the span" if tr.get("directions_disagree") else ""
+        print(f"  last 4 weeks: {r4['direction']}, {r4['clicks_day_first']} -> {r4['clicks_day_last']} "
+              f"clicks/day ({r4['change_pct']}%){flag}")
+    if tr["level_shift"]:
+        print(f"  level shift at week {tr['level_shift']['week_start']}: "
+              f"{tr['level_shift']['mean_clicks_day_before']} -> {tr['level_shift']['mean_clicks_day_after']} "
+              f"clicks/day ({tr['level_shift']['step_pct']}%)")
+    for c in F["rolling_comparisons"]:
+        tail = "" if c["comparable"] else "   [not comparable: " + c["not_comparable_because"] + "]"
+        print(f"  {c['span_days']:>3}d vs previous {c['span_days']}d: "
+              f"{c['previous']['clicks_day']} -> {c['current']['clicks_day']} clicks/day "
+              f"({c['delta_pct']['clicks_day']}%){tail}")
+    print(f"  deep window {cur[0]}..{cur[1]} vs {prev[0]}..{prev[1]} carries the keyword and page analysis")
     return F
 
 

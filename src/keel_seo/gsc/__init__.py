@@ -11,10 +11,11 @@ Generic, project-neutral pieces:
   Run: ``python -m keel_seo.gsc.registry sync``.
 * :mod:`keel_seo.gsc.indexing` — the Google Indexing API client
   (``notify_url``/``notify_urls``/``url_status``).
-* :mod:`keel_seo.gsc.pulse` — the recurring measurement engine: rolling windows
-  resolved from the last finalised day, keyword cohorts, the CTR noise floor, the
-  site's own position→CTR curve, page families, auto-discovered cannibalisation
-  pairs and a diff against the previous run. Deterministic and model-free; the
+* :mod:`keel_seo.gsc.pulse` — the recurring measurement engine: a trend span (90
+  days by default) carrying week-over-week, rolling 7/28/30/span comparisons and a
+  level-shift detector, and inside it one deep window with keyword cohorts, the CTR
+  noise floor, the site's own position→CTR curve, page families, auto-discovered
+  cannibalisation pairs and a diff against the previous run. Deterministic and model-free; the
   ``/seo-pulse`` skill interprets what it writes. Run:
   ``python -m keel_seo.gsc.pulse --days 28``.
 * :mod:`keel_seo.gsc.build` / :mod:`keel_seo.gsc.live` / :mod:`keel_seo.gsc.dashboard`

@@ -249,22 +249,37 @@ the consuming project; this package owns only the neutral connector + registry.
 
 ### Recurring measurement (`keel_seo.gsc.pulse`)
 
-Answers "what changed since last time" for one property, without the traps that make
-a naive before/after read wrong. Site totals come from the complete `date` dimension
+Reads the **shape of a property's performance over a span** — 90 days by default — and
+then, inside it, one deep before/after window. The trend is the frame on purpose: a
+window pair answers "what changed", but only the trend says whether that change is a
+step, a drift, or last week's weather, and the two often disagree (a site can be up on
+the quarter and falling this month — `trend.directions_disagree` says so out loud).
+Week-over-week and a rolling 30-vs-30 are always computed, because those are what a
+human actually reads. All of it avoids the traps that make a naive before/after wrong. Site totals come from the complete `date` dimension
 (the query dimension withholds a different share in each window); position is reported
 unweighted over the matched keyword set (the impression-weighted average *improves*
 when a site loses keywords); every CTR cohort is gated at a minimum impression count
 (CTR is unreadable on a handful of impressions).
 
 ```
-python -m keel_seo.gsc.pulse --days 28                     # this window vs the one before
-python -m keel_seo.gsc.pulse --days 14 --end 2026-08-24    # a fixed span, e.g. straddling an event
-python -m keel_seo.gsc.pulse --days 28 --content-prefixes blog,news
+python -m keel_seo.gsc.pulse                                   # 90-day trend, 28-day deep window
+python -m keel_seo.gsc.pulse --trend-days 180                  # a longer trend, same window
+python -m keel_seo.gsc.pulse --days 14 --end 2026-08-24        # a window straddling a dated event
+python -m keel_seo.gsc.pulse --content-prefixes blog,news
 ```
 
+What it writes about the trend: `trend` (direction from a 28-day trailing mean, net
+change, best and worst week, the largest week-over-week break, a single-breakpoint
+`level_shift`, and `recent_4_weeks` beside the span so the two directions can be
+compared), `week_over_week` for every complete week, `rolling_comparisons` for 7 / the
+window / 30 / the trend span, and `rolling_30_vs_30` on its own. A span the property is
+too young to fill is marked `partial_history`, and any comparison whose previous span
+is mostly missing is marked `comparable: false` instead of being reported as a result —
+a launch ramp otherwise reads as "+34,091%".
+
 It writes `<end>-facts.json` and appends `history.json` under `--out-dir`, diffing the
-previous run into `facts["vs_previous_run"]`. Windows resolve from the last **finalised**
-day, never from today, and are recorded in `facts.meta`; the pull is cached, so two runs
+previous run into `facts["vs_previous_run"]`. Every span resolves from the last
+**finalised** day, never from today, and is recorded in `facts.meta`; the pull is cached, so two runs
 on one cache are byte-identical. `--content-prefixes` names the directories whose
 children are single articles (`blog`, `news`, a glossary) so the page-family rollup
 groups them instead of listing every post.
