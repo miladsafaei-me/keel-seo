@@ -62,4 +62,20 @@ vocabulary and taxonomy), so it stays in the consuming project. The dashboard
 *reads* whatever the host's own tooling produced (or pulls live GSC data), and
 reaches back into host ideation only through the explicit ``gsc_queue_hook``
 config seam — it never owns clustering or scope logic itself.
+
+Coverage note — what the API exposes and what is wrapped here. ``searchconsole v1``
+serves five resources: ``searchanalytics``, ``sites``, ``sitemaps``,
+``urlInspection`` and ``urlTestingTools``; ``indexing v3`` serves one,
+``urlNotifications``. The first four and ``urlNotifications`` all have clients above.
+``urlTestingTools`` is the Mobile-Friendly Test, which Google retired in December
+2023: the resource still appears in the discovery document but every call answers
+``400 Request contains an invalid argument`` (verified 2026-08-29), so it is
+deliberately not wrapped — a client for it could only ever return that error.
+
+Two things a caller may go looking for and will not find, because Search Console has
+no API for them at all: **managing users and permissions** (adding a service account
+to a property, or changing its level, is a browser-only action) and the **Removals
+tool** (the temporary block; see ``indexing.removal_guidance``). Property
+*verification* is likewise browser-only — ``sites.add`` registers a property but
+cannot verify it.
 """

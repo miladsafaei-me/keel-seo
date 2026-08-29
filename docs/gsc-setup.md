@@ -124,6 +124,22 @@ key can act on and the permission level held on each. A Domain property is
 `sc-domain:example.com` — no scheme, no trailing slash — and a URL-prefix property is
 the full origin with its trailing slash.
 
+## What has no API at all
+
+Three things in Search Console cannot be automated, and each one is a browser step:
+
+- **Users and permissions.** Adding a service account to a property, or changing its
+  level, has no API — which is why the setup above is a manual step per property.
+- **Property verification.** `sites.add` registers a property; verifying ownership
+  (the DNS TXT record, or an HTML file / meta tag) is done in the browser.
+- **The Removals tool.** The temporary ~6-month block is UI-only. The Indexing API's
+  `URL_DELETED` is a different thing — a crawl hint, not a removal.
+
+One more, for completeness: `searchconsole v1` still lists a `urlTestingTools`
+resource (the Mobile-Friendly Test), but Google retired it in December 2023 and every
+call now answers `400 Request contains an invalid argument`. It is intentionally not
+wrapped.
+
 ## Serving several properties from one key
 
 Nothing needs to be duplicated in Cloud: one project, one service account, one key,
