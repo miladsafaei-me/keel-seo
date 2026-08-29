@@ -9,8 +9,27 @@ Generic, project-neutral pieces:
 * :mod:`keel_seo.gsc.registry` — maintain a durable JSON/CSV registry of every
   query a property has ever appeared for, refreshed by an incremental ``sync``.
   Run: ``python -m keel_seo.gsc.registry sync``.
+* :mod:`keel_seo.gsc.auth` — the shared credential/transport layer every client
+  below sits on: key resolution, per-scope service construction and caching, retry
+  with backoff, and error messages that name the console to go fix.
+* :mod:`keel_seo.gsc.analytics` — the complete Search Analytics surface the simple
+  connector leaves out: dimension filters, search types (image/video/news/Discover),
+  aggregation types, ``dataState``, and pagination past the 25,000-row response cap.
+* :mod:`keel_seo.gsc.inspection` — the URL Inspection API: index status, coverage
+  state, Google's chosen canonical, crawl time and fetch state, robots.txt state,
+  discovery sitemaps and referring URLs, plus the mobile/rich-result/AMP verdicts.
+  Quota-paced (2,000/day, 600/min per property).
 * :mod:`keel_seo.gsc.indexing` — the Google Indexing API client
-  (``notify_url``/``notify_urls``/``url_status``).
+  (``notify_url``/``notify_urls``/``remove_url``/``url_status``), quota-paced against
+  the per-Cloud-project 200/day limit, plus ``removal_guidance`` for the removal path
+  the API deliberately cannot take on its own.
+* :mod:`keel_seo.gsc.sitemaps` — the Sitemaps API: list, read, submit and delete.
+* :mod:`keel_seo.gsc.sites` — the Sites API: list, get, add and delete properties,
+  and the permission level this key holds on each.
+* :mod:`keel_seo.gsc.check` — a preflight that proves each capability with the
+  cheapest real call and names the fix for whatever fails. Start here when a 403
+  appears: it distinguishes a disabled Cloud API from a missing property grant from
+  a permission level that is too low.
 * :mod:`keel_seo.gsc.pulse` — the recurring measurement engine: a trend span (90
   days by default) carrying week-over-week, rolling 7/28/30/span comparisons and a
   level-shift detector, and inside it one deep window with keyword cohorts, the CTR

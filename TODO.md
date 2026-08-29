@@ -8,6 +8,25 @@ Guidelines:
 - Note real dependencies explicitly ("Blocked by: ...", "Requires: ...").
 - Delete a task from this file the moment it's done. This file only ever holds what's left.
 
+## P1 — Next up
+
+- [ ] **Indexing API is the only capability still blocked on all 5 properties** (measured
+  2026-08-29 with `python -m keel_seo.gsc check`). Everything else — Search Analytics,
+  URL Inspection, Sitemaps, Sites — passes today on revenika.com, martiland.com,
+  binaryoption.trading, prop-firm.review and sarmayeh.media, all of which already grant
+  `gsc-dashboard@milad-seo-tools.iam.gserviceaccount.com` (project `milad-seo-tools`,
+  number 90801831831) at `siteFullUser`. Two console steps unblock indexing, both
+  outside this repo: (a) enable `indexing.googleapis.com` on the Cloud project — once,
+  covers all five; (b) raise the service account from Full to **Owner** on each
+  property in Search Console. Re-run `keel_seo_gsc_check` per property afterwards; it
+  should reach 8/8. Requires: nothing in code — the client is done and tested.
+- [ ] Adopt v0.11.0 in the 5 consumers: bump the pin, run `migrate` (new
+  `keel_seo.UrlInspection` + `keel_seo.IndexingSubmission` tables, migration 0003), and
+  add `manage.py keel_seo_gsc_sitemaps --auto` to the deploy one-shot so each deploy
+  re-submits the sitemap. `GSC_SITE` / `GSC_CREDENTIALS` are already wired in every
+  consumer's `compose.prod.yaml`, so no new env work is needed. Consider a weekly
+  `keel_seo_gsc_inspect --all-indexable --stale-days 30` timer per site once adopted.
+
 ## P2 — Backlog
 - [ ] Wire the new content-freshness engine (`keel_seo.freshness`, v0.6.0) into consumer
   projects one at a time. Each needs: `KEEL_SEO["freshness_enabled"] = True`, a

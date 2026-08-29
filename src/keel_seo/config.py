@@ -39,6 +39,18 @@ key is optional and the defaults make the package work standalone:
         # the built-in list doesn't know about). Default None → built-ins only.
         "freshness_strip_patterns": None,
 
+        # ---- keel_seo.gsc API access (connector, inspection, indexing, sitemaps) ----
+        # The Search Console property every API call acts on: "sc-domain:example.com"
+        # for a Domain property, "https://example.com/" for a URL-prefix one. The
+        # $GSC_SITE environment variable wins over this, so a container can override
+        # a settings default without a rebuild. No default -- acting on the wrong
+        # property is worse than failing, so an unset property raises.
+        "gsc_site": "sc-domain:example.com",
+        # Path to the service-account JSON key shared by every Search Console API.
+        # $GSC_CREDENTIALS wins over this; the fallback is
+        # ~/.config/keel-seo/gsc-service-account.json.
+        "gsc_credentials": "/run/secrets/gsc-service-account.json",
+
         # ---- keel_seo.gsc dashboard (the /search-console UI, keel_seo.gsc.urls) ----
         # Directory holding the committed exporter output: gsc_dashboard.json,
         # gsc_insights.json, query_enrichment.json, windows/*.json. Default (unset):
@@ -87,6 +99,8 @@ _DEFAULTS = {
     "freshness_enabled": False,
     "freshness_content_selector": "main",
     "freshness_strip_patterns": None,
+    "gsc_site": None,
+    "gsc_credentials": None,
     "gsc_data_dir": None,
     "gsc_base_template": "keel_seo/gsc/_default_base.html",
     "gsc_queue_hook": None,

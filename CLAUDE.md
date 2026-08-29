@@ -19,8 +19,13 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
   see README's "Content freshness" section), `keel_seo.intent` (since v0.7.0: the
   one-intent-one-URL registry, its nine invariants and the `keel_seo_intent_check`
   gate; `guarded_prefixes` since v0.7.1), and `keel_seo.gsc` — the connector, query
-  registry, Indexing API client, the recurring `pulse` measurement engine (since
-  v0.8.0), and (since v0.4.0) the `/search-console` dashboard UI
+  registry, the recurring `pulse` measurement engine (since v0.8.0), the **complete
+  Search Console API client** (since v0.11.0: `auth` for shared credentials/transport,
+  `analytics` for the full Search Analytics surface, `inspection` for URL Inspection,
+  `indexing` for the Indexing API, `sitemaps`, `sites`, `check` for the preflight, the
+  `UrlInspection` + `IndexingSubmission` state store, and the four
+  `keel_seo_gsc_*` management commands), and (since v0.4.0) the `/search-console`
+  dashboard UI
   (`gsc/{build,live,dashboard,views,urls}.py` + `templates/keel_seo/gsc/` +
   `static/keel_seo/gsc/`): pure data transforms, the live-API path, context
   building/insight dismissals, and the routes. Mount with
@@ -55,6 +60,8 @@ fork of this code.
 | `KEEL_SEO["freshness_enabled"]` | `freshness.record`, `management/commands/keel_seo_freshness.py` | False | opt in to the content-hashing render pass |
 | `KEEL_SEO["freshness_content_selector"]` | `freshness.normalize_content` | `"main"` | tag name / `#id` / `.class` of the region to hash |
 | `KEEL_SEO["freshness_strip_patterns"]` | `freshness._resolved_strip_patterns` | None → built-ins only | extra `(regex, replacement)` pairs, appended to `DEFAULT_STRIP_PATTERNS` |
+| `KEEL_SEO["gsc_site"]` | `gsc/auth.resolve_site` | none → raises (`$GSC_SITE` wins) | the property, e.g. `sc-domain:example.com` |
+| `KEEL_SEO["gsc_credentials"]` | `gsc/auth.credentials_path` | `~/.config/keel-seo/gsc-service-account.json` (`$GSC_CREDENTIALS` wins) | path to the service-account JSON key |
 | `KEEL_SEO["gsc_data_dir"]` | `config.gsc_data_dir` | `<MEDIA_ROOT>/gsc/data` | dir holding the exporter's JSON |
 | `KEEL_SEO["gsc_base_template"]` | `gsc/views.py` context | `keel_seo/gsc/_default_base.html` | template name (title/extra_head/content/extra_js blocks) |
 | `KEEL_SEO["gsc_queue_hook"]` | `gsc/views.queue` | none → button errors | `(spec, *, source_type, source_ref) -> (obj, outcome)` |

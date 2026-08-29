@@ -233,6 +233,15 @@ Configure via env (Bucket-3 blanks):
 - `GSC_CREDENTIALS` — service-account JSON key (default `~/.config/keel-seo/gsc-service-account.json`).
 - `GSC_DATA_DIR` — where the registry is stored (default `~/.local/share/keel-seo/gsc`).
 
+A Django host can set the first two as `KEEL_SEO["gsc_site"]` / `KEEL_SEO["gsc_credentials"]`
+instead; the environment variables win over the settings, so a container overrides a
+settings default without a rebuild. The property is never guessed — an unset one raises
+rather than acting on the wrong site.
+
+Google Cloud + Search Console setup (which APIs to enable, which permission level each
+capability needs, and how one service account serves several properties) is in
+[`docs/gsc-setup.md`](docs/gsc-setup.md).
+
 Use:
 
 ```
@@ -289,22 +298,147 @@ groups them instead of listing every post.
 It measures and writes JSON; it never interprets. The `/seo-pulse` skill in **keel-kit**
 carries the reading rules, the finding→action playbook and the report it publishes.
 
-### Google Indexing API (`keel_seo.gsc.indexing`)
+### The full Search Console API surface (v0.11.0)
 
-Submits URL-update / URL-delete notifications so freshly-published pages get
-crawled sooner than sitemap discovery alone. Shares `$GSC_CREDENTIALS` with the
-connector, but needs a DIFFERENT permission level: the service account must be an
-**Owner** of the property (Restricted/Full is not enough) and the "Web Search
-Indexing API" must be enabled on the Cloud project.
+Everything Google exposes for a property is reachable from one command, one
+service-account key and one set of Django management commands. Start with the
+preflight — it proves each capability with a real call and names the fix for
+whatever fails:
 
 ```
-python -m keel_seo.gsc.indexing publish <url>   # notify URL_UPDATED
-python -m keel_seo.gsc.indexing remove  <url>   # notify URL_DELETED
-python -m keel_seo.gsc.indexing status  <url>   # read last-notification metadata
+python -m keel_seo.gsc check --site sc-domain:example.com
+python manage.py keel_seo_gsc_check        # same, with the project's settings loaded
 ```
 
-Or from Python: `notify_url(url)`, `notify_urls(urls)` (per-URL errors captured,
-never raised), `url_status(url)`.
+```
+python -m keel_seo.gsc <command>
+
+  check      diagnose credentials, permissions and every API in one pass
+  sites      list / get / add / delete properties
+  inspect    URL Inspection API: index status, canonical, crawl, coverage
+  index      Indexing API: URL_UPDATED / URL_DELETED notifications
+  sitemaps   list / get / submit / delete sitemaps
+  analytics  Search Analytics with filters, types, aggregation, pagination
+  query      the simple Search Analytics query CLI
+  registry   durable query registry (sync / stats / xlsx)
+  pulse      recurring measurement engine (trend + deep window)
+```
+
+Every capability, the scope it uses and the property permission it needs:
+
+| Capability | Module | Scope | Property permission |
+|---|---|---|---|
+| Search Analytics | `analytics`, `connector`, `pulse` | `webmasters.readonly` | Restricted |
+| URL Inspection | `inspection` | `webmasters.readonly` | **Full** or Owner |
+| Sitemaps (read) | `sitemaps` | `webmasters.readonly` | Restricted |
+| Sitemaps (submit/delete) | `sitemaps` | `webmasters` | Full or Owner |
+| Sites (list/get) | `sites` | `webmasters.readonly` | Restricted |
+| Sites (add/delete) | `sites` | `webmasters` | Owner |
+| Indexing notifications | `indexing` | `indexing` | **Owner** |
+
+One service-account key covers all of it — only the scope differs per call — so
+granting the account **Owner** on a property unlocks the whole table at once.
+
+#### URL Inspection (`keel_seo.gsc.inspection`)
+
+The API behind the URL Inspection panel: index status, `coverageState`, the canonical
+Google actually chose, last crawl time and user agent, robots.txt and fetch state, the
+sitemaps and referring URLs it was discovered through, plus the mobile-usability,
+rich-result and AMP verdicts. Quota is **2,000 inspections/day and 600/minute per
+property**, and `inspect_urls` paces itself against both.
+
+```
+python -m keel_seo.gsc inspect url https://example.com/pricing/
+python -m keel_seo.gsc inspect urls urls.txt --json out.json
+
+python manage.py keel_seo_gsc_inspect --url /pricing/
+python manage.py keel_seo_gsc_inspect --all-indexable --limit 500
+python manage.py keel_seo_gsc_inspect --all-indexable --stale-days 30
+python manage.py keel_seo_gsc_inspect --sitemap https://example.com/sitemap.xml
+python manage.py keel_seo_gsc_inspect --not-indexed      # re-check known gaps
+```
+
+The command stores one current-state row per (site, url) in `keel_seo.UrlInspection`
+and reports the gap that matters: how many indexable pages Google does **not** have
+indexed, how many it canonicalises elsewhere, and the coverage-state histogram behind
+those counts. Because the store records `fetched_at`, `--stale-days` lets a nightly
+run walk a large site's backlog in quota-sized bites — never-inspected URLs first,
+then the oldest reading — instead of re-reading the same first 2,000 URLs forever.
+
+#### Indexing API (`keel_seo.gsc.indexing`)
+
+Notifies Google that a URL was updated or removed, so it is re-crawled sooner than
+sitemap discovery alone would manage. Needs **Owner** permission and the "Web Search
+Indexing API" enabled on the Cloud project. Quota is **200 publishes/day per Cloud
+project** — not per property, so several sites on one key share the same budget, which
+is why every submission is logged to `keel_seo.IndexingSubmission`.
+
+```
+python -m keel_seo.gsc index publish <url>            # URL_UPDATED
+python -m keel_seo.gsc index remove  <url>            # URL_DELETED
+python -m keel_seo.gsc index status  <url>            # last-notification metadata
+python -m keel_seo.gsc index batch urls.txt --limit 200
+
+python manage.py keel_seo_gsc_index --url /blog/new-post/
+python manage.py keel_seo_gsc_index --changed-since 3      # freshness-driven
+python manage.py keel_seo_gsc_index --all-indexable --dry-run
+python manage.py keel_seo_gsc_index --url /old-page/ --remove
+```
+
+The command refuses to spend quota on a URL it already notified within
+`--cooldown-hours` (default 24), and truncates to the daily cap rather than burning
+into 429s.
+
+**On removing a URL.** `URL_DELETED` is a notification, not a removal: Google drops the
+page once a crawl confirms a 404/410 or a `noindex`, and never merely because we asked.
+The Search Console **Removals** tool — the temporary ~6-month block — has no public API
+and stays a browser action. `--removal-guidance` (and `indexing.removal_guidance(url)`)
+prints the durable path instead of pretending otherwise, including the trap that ruins
+most removals: blocking the URL in `robots.txt` prevents the re-crawl that would have
+seen the 410, so the page lingers in the index indefinitely.
+
+#### Sitemaps (`keel_seo.gsc.sitemaps`)
+
+```
+python -m keel_seo.gsc sitemaps list
+python -m keel_seo.gsc sitemaps submit https://example.com/sitemap.xml
+
+python manage.py keel_seo_gsc_sitemaps                     # list with counts
+python manage.py keel_seo_gsc_sitemaps --auto              # submit <origin>/sitemap.xml
+```
+
+`--auto` is safe to run on every deploy: submission is idempotent and re-queues a
+sitemap Google may not have re-downloaded since the last content release. The listing
+shows submitted-vs-indexed counts per sitemap, which is the cheapest honest answer to
+"did Google actually process what we shipped?".
+
+#### Search Analytics, complete (`keel_seo.gsc.analytics`)
+
+What `connector` and the dashboard's live path leave out: dimension filters, the
+non-web search types, aggregation types, `dataState`, and pagination past the
+25,000-row response cap.
+
+```
+python -m keel_seo.gsc analytics --dimensions query,page --days 28
+python -m keel_seo.gsc analytics --filter "page contains /blog/" --dimensions query
+python -m keel_seo.gsc analytics --type discover --dimensions page --days 90
+python -m keel_seo.gsc analytics --dimensions query --all --csv all-queries.csv
+```
+
+Filters are written as `"<dimension> <operator> <value>"` (`equals`, `notEquals`,
+`contains`, `notContains`, `includingRegex`, `excludingRegex`) and repeat with
+`--filter`. From Python: `analytics.query(...)` for one call, `analytics.fetch_all(...)`
+to walk every page.
+
+#### Sites (`keel_seo.gsc.sites`)
+
+```
+python -m keel_seo.gsc sites list      # every property + this key's permission on it
+python -m keel_seo.gsc sites add sc-domain:example.com
+```
+
+`add` registers a property; it does not **verify** it. Verification has no public API
+and stays a one-time browser step per property.
 
 ### GSC dashboard UI (`keel_seo.gsc.dashboard` / `.views` / `.urls`)
 
