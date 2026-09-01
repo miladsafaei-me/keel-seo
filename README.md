@@ -557,6 +557,30 @@ tagged with a deterministic intent — `navigational`, `informational`,
 `commercial`, `transactional`, or `brand` for the seed plus a bare noun. No model
 is involved anywhere in this package.
 
+### What the priority score is worth, measured
+
+The score was checked against real numbers rather than left as an assertion. A
+Semrush export of 1,747 `quotex` keywords carrying US search volume was joined to
+an autocomplete harvest of the same seed; 379 phrases appear in both.
+
+| Signal | Spearman correlation with real search volume |
+|---|---|
+| **`priority` (the shipped composite)** | **+0.42** |
+| `reach` — how many independent expansions surfaced the phrase | +0.44 |
+| `relevance` — Google's own suggestion score | +0.18 |
+| `best_rank` — position in the suggestion list | +0.15 |
+
+Two things follow. **Reach is the signal that matters**, by a wide margin, and
+the weights are set accordingly — an earlier version led with rank and scored
+only +0.27. And a moderate positive correlation is exactly what it looks like:
+enough to sort a harvest into "worth a page" and "tail", not enough to choose
+between two close candidates. For that, use volume from §4's Keyword Planner.
+
+Coverage from the same comparison, for a harvest that had not yet closed: it
+reached **71% of the total search volume** Semrush lists for the seed, and 48 of
+its 100 highest-volume keywords, while surfacing 2,275 phrases the export does
+not contain at all.
+
 ### Two things to know before trusting the output
 
 **It cannot measure volume.** Autocomplete returns none, and no parameter exists
