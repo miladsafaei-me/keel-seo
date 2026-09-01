@@ -17,14 +17,24 @@ exhausted.
 results, so the on-disk cache is safe and a long crawl can be interrupted and
 resumed without re-paying for what it already collected.
 
-*The endpoint blocks, and it blocks hard.* At roughly 5,000 requests in a few
-minutes it began answering ``HTTP 403`` to everything, and was still refusing a
-single hand-made request more than a hundred seconds later. There is no quota
-header and no ``Retry-After`` to read, so the block is only visible as a status
-code. This is why the client throttles by default, treats 403/429/503 as a
-distinct condition rather than a generic failure, and gives up deliberately
-through a circuit breaker instead of grinding a whole budget into errors — which
-is exactly what the first unthrottled run did.
+*The endpoint blocks, and it blocks harder than a retry can solve.* At roughly
+5,000 requests in a few minutes it began answering ``HTTP 403``, and the block
+measured **over 75 minutes** — not the seconds a backoff is built for. It is also
+**IP-wide, not query-scoped**: once tripped, ``weather`` and ``pizza recipe`` were
+refused exactly like the seed being harvested, so the whole machine loses the
+endpoint, not just the crawl. There is no quota header and no ``Retry-After``, so
+it is visible only as a status code.
+
+Whether the trigger is the *rate* or the *cumulative count* is not known — the
+one observation is ~5,000 requests at 57 q/s. Until that is separated, throttling
+alone cannot be assumed to prevent it, so a single run should stay well under a
+few thousand network calls and lean on the cache across sessions rather than
+trying to finish a large universe in one pass.
+
+This is why the client throttles by default, treats 403/429/503 as a distinct
+condition rather than a generic failure, and gives up deliberately through a
+circuit breaker instead of grinding a whole budget into errors — which is exactly
+what the first unthrottled run did.
 """
 from __future__ import annotations
 

@@ -601,8 +601,17 @@ the run through an exit in it.
 
 The endpoint blocks, and it gives no warning: an unthrottled run measured 57
 queries/second and was answered `HTTP 403` for everything after about 5,000
-requests, still refusing a single hand-made request minutes later. There is no
-`Retry-After` to read. So the client throttles to 6 q/s by default, treats
+requests. Two things about that block matter more than its existence. It lasted
+**over 75 minutes**, so it is not something a backoff waits out. And it is
+**IP-wide, not query-scoped** — once tripped, `weather` and `pizza recipe` were
+refused exactly like the harvested seed, so the whole machine loses the endpoint.
+There is no `Retry-After` to read.
+
+Whether the trigger is the rate or the cumulative count is unknown; the single
+observation is ~5,000 requests at 57 q/s. Until those are separated, **do not
+assume throttling alone prevents it** — keep one run well under a few thousand
+network calls and let the cache carry a large universe across several sessions.
+So the client throttles to 6 q/s by default, treats
 403/429/503 as a distinct condition rather than a generic error, and trips a
 circuit breaker that ends the crawl cleanly — keeping everything collected so far
 and saying in the report that the harvest is incomplete. Every response is cached
