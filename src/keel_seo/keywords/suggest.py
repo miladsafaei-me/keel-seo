@@ -127,13 +127,19 @@ class Response:
 class SuggestCache:
     """Append-only JSONL cache keyed by the full request identity.
 
-    Keyed by (client, hl, ds, query) because language and vertical change the
-    answer — caching on the query text alone would silently serve a YouTube
-    result to a web-vertical request.
+    Keyed by (egress country, client, hl, ds, query). Language and vertical
+    change the answer, so caching on the query text alone would serve a YouTube
+    result to a web-vertical request. Geography belongs in the key for a sharper
+    reason: autocomplete answers according to the requesting IP, so a cache
+    carried between two exit routes would blend two different markets into one
+    harvest that claims to be a single one. Including the egress means a run from
+    a new country starts its own namespace instead of quietly inheriting another
+    country's answers.
     """
 
-    def __init__(self, path: str | None):
+    def __init__(self, path: str | None, egress: str = "unknown"):
         self.path = path
+        self.egress = egress
         self._rows: dict[str, list] = {}
         self._lock = threading.Lock()
         self.hits = 0
@@ -149,9 +155,8 @@ class SuggestCache:
                         continue
                     self._rows[row["k"]] = row["v"]
 
-    @staticmethod
-    def key(client: str, hl: str, ds: str, query: str) -> str:
-        return f"{client}|{hl}|{ds}|{query}"
+    def key(self, client: str, hl: str, ds: str, query: str) -> str:
+        return f"{self.egress}|{client}|{hl}|{ds}|{query}"
 
     def get(self, key: str) -> list | None:
         value = self._rows.get(key)
@@ -240,7 +245,7 @@ class SuggestClient:
         return None
 
     def fetch(self, query: str) -> Response:
-        key = SuggestCache.key(self.client, self.hl, self.ds, query)
+        key = self.cache.key(self.client, self.hl, self.ds, query)
         payload = self.cache.get(key)
         if payload is None:
             if self.blocked:

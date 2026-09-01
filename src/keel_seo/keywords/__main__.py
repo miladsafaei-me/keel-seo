@@ -67,18 +67,21 @@ def main(argv: list[str] | None = None) -> int:
     cache_path = args.cache or os.path.join(args.out, ".suggest-cache.jsonl")
     os.makedirs(args.out, exist_ok=True)
 
+    # The egress is probed before the client is built, because it is part of the
+    # cache key: a harvest must never inherit answers collected from another
+    # country's exit.
+    egress = egress_identity()
+    progress(f"egress {egress['country']} ({egress['ip']}) — this is the harvest's "
+             "geography; autocomplete ignores gl=")
+
     client = SuggestClient(
         hl=args.hl,
         ds=args.ds,
         client=args.client,
         workers=args.workers,
         rate=args.rate,
-        cache=SuggestCache(cache_path),
+        cache=SuggestCache(cache_path, egress=egress.get("country") or "unknown"),
     )
-
-    egress = egress_identity()
-    progress(f"egress {egress['country']} ({egress['ip']}) — this is the harvest's "
-             "geography; autocomplete ignores gl=")
 
     universe = crawl(
         args.seed,

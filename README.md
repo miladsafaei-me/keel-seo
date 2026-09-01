@@ -569,7 +569,9 @@ a volume estimate.
 `gl=br` return byte-identical results, while the same query from two different
 egress IPs does not. Every run therefore probes its own egress and stamps the
 country it actually left from into the output, rather than one the caller asked
-for. To harvest a specific market, route the run through an exit in it.
+for, and the cache is namespaced by it so two markets can never be blended into
+one harvest that claims to be a single one. To harvest a specific market, route
+the run through an exit in it.
 
 ### Rate limits
 
@@ -580,8 +582,9 @@ requests, still refusing a single hand-made request minutes later. There is no
 403/429/503 as a distinct condition rather than a generic error, and trips a
 circuit breaker that ends the crawl cleanly — keeping everything collected so far
 and saying in the report that the harvest is incomplete. Every response is cached
-on disk by (client, language, vertical, query), so a re-run after a block repeats
-none of the work already done.
+on disk by (egress country, client, language, vertical, query), so a re-run after
+a block repeats none of the work already done — and a run from a new country
+starts its own namespace rather than quietly inheriting another market's answers.
 
 ## Status
 

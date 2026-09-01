@@ -174,6 +174,22 @@ class RateLimitTests(unittest.TestCase):
         client._note_block()
         self.assertFalse(client.blocked)
 
+    def test_a_cache_from_another_country_is_not_reused(self):
+        """Autocomplete answers by IP, so geography is part of a response's identity."""
+        turkey = SuggestCache(None, egress="TR")
+        germany = SuggestCache(None, egress="DE")
+        self.assertNotEqual(turkey.key("chrome", "en", "", "quotex"),
+                            germany.key("chrome", "en", "", "quotex"))
+        turkey.put(turkey.key("chrome", "en", "", "quotex"), [["quotex login", 900]])
+        self.assertIsNone(germany.get(germany.key("chrome", "en", "", "quotex")))
+
+    def test_language_and_vertical_are_also_part_of_the_key(self):
+        cache = SuggestCache(None, egress="TR")
+        base = cache.key("chrome", "en", "", "quotex")
+        self.assertNotEqual(base, cache.key("chrome", "pt-BR", "", "quotex"))
+        self.assertNotEqual(base, cache.key("chrome", "en", "yt", "quotex"))
+        self.assertNotEqual(base, cache.key("firefox", "en", "", "quotex"))
+
     def test_a_blocked_client_stops_making_requests(self):
         client = SuggestClient(cache=SuggestCache(None), rate=0)
         client.blocked = True
