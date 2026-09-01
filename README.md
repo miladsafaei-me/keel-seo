@@ -28,6 +28,9 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
 - `keel_seo.intent` (since v0.7.0) — the anti-cannibalization gate: a host-declared
   registry of query intents, one canonical owning URL each, enforced against the live
   Landing table by `manage.py keel_seo_intent_check --strict`. See below.
+- `keel_seo.keywords` (since v0.12.0) — market-side keyword research from Google
+  autocomplete alone: crawls one seed's whole query universe, clusters it by shared
+  wording and ranks it. Standard library only, no API key. See below.
 
 ## Consume it (host wiring)
 
@@ -491,6 +494,95 @@ Keyword picks and whole-cluster queueing (`dedicated_queue` / `cluster_queue`) g
 straight into `keel_content`'s clustering-queue accumulator (a peer Keel package,
 soft-imported) — no host hook needed for those two.
 
+## Keyword universe (`keel_seo.keywords`)
+
+Search Console tells a host what it is **already shown for**. This tells it what
+the market **asks**, including all the demand it is invisible to — the other half
+of keyword work, and the half no amount of first-party data can reconstruct.
+
+One source only: Google's autocomplete endpoint, keyless and free.
+
+```bash
+python -m keel_seo.keywords quotex --out ./keywords
+python -m keel_seo.keywords "pip value calculator" --levels 2 --rate 5
+```
+
+Three files come out, all in priority order: `<seed>.json` (the full record,
+every signal per phrase), `<seed>.csv` (flat, for a spreadsheet), and `<seed>.md`
+(clusters, intents and the contamination check, for a person).
+
+### How one seed becomes a universe
+
+Autocomplete answers at most 15 phrases per request, so asking a bare term returns
+its fifteen most popular continuations and hides the rest. The crawler gets past
+that by asking the same term many times with something different attached, then
+re-seeding from what comes back.
+
+**Surround the term.** Four families of attachment, each reaching phrases the
+others cannot: a spaced suffix sweep (`quotex a` … `quotex z`, plus digits), a
+tight suffix sweep with no space (`quotexa` → `quotexapk`), a spaced *prefix*
+sweep (`a quotex` → `is quotex a broker`, which is how phrases with the term in
+the middle or at the end are reached at all), and real words on both sides
+(`is quotex` → `is quotex legal in india`; `quotex vs` → `quotex vs pocket
+option`). 189 queries for the seed, 55 for each phrase discovered after it.
+
+**Drill only where evidence says there is more.** A response is capped at the
+client's capacity, so a *full* response means Google truncated it and something
+is hidden behind it; that query is re-asked with each letter appended. A short
+response is left alone — that corner of the space is already fully reported.
+
+**Re-seed and repeat.** Every returned phrase that contains the seed becomes the
+next round's seed. Each level discovers less than the last, and when a level
+discovers nothing the universe is closed — the report says so explicitly rather
+than leaving the reader to assume it.
+
+**Stay on topic.** Only phrases containing the seed are kept and re-seeded. This
+is both the definition of the universe and the thing that stops the crawl
+wandering: `how to quotex` returns `how to quote on reddit`, and re-seeding that
+walks the search into an unrelated industry. Rejected phrases are counted, not
+discarded — a term whose neighbours belong to another market is contamination
+worth seeing, and the report has a section for it.
+
+### Clustering
+
+Phrases are grouped by how much wording they genuinely share. The seed's own
+tokens are removed first, since every phrase has them and they say nothing about
+which phrases belong together. Shared words are then weighted by rarity, because
+two phrases sharing `app` share almost nothing while two sharing `zigzag` are
+about the same thing. Clusters grow by average linkage, which is what stops a
+long tail chaining into one blob.
+
+Each cluster is labelled by the rare words most of its members agree on and
+tagged with a deterministic intent — `navigational`, `informational`,
+`commercial`, `transactional`, or `brand` for the seed plus a bare noun. No model
+is involved anywhere in this package.
+
+### Two things to know before trusting the output
+
+**It cannot measure volume.** Autocomplete returns none, and no parameter exists
+that would make it. The `priority` score ranks demand *shape* — Google's own
+ordering, how many independent expansions surfaced a phrase, its relevance score,
+its depth — and every output file says so in its own header. Do not present it as
+a volume estimate.
+
+**Its geography is the egress IP.** `gl=` does nothing: `gl=us`, `gl=in` and
+`gl=br` return byte-identical results, while the same query from two different
+egress IPs does not. Every run therefore probes its own egress and stamps the
+country it actually left from into the output, rather than one the caller asked
+for. To harvest a specific market, route the run through an exit in it.
+
+### Rate limits
+
+The endpoint blocks, and it gives no warning: an unthrottled run measured 57
+queries/second and was answered `HTTP 403` for everything after about 5,000
+requests, still refusing a single hand-made request minutes later. There is no
+`Retry-After` to read. So the client throttles to 6 q/s by default, treats
+403/429/503 as a distinct condition rather than a generic error, and trips a
+circuit breaker that ends the crawl cleanly — keeping everything collected so far
+and saying in the report that the harvest is incomplete. Every response is cached
+on disk by (client, language, vertical, query), so a re-run after a block repeats
+none of the work already done.
+
 ## Status
 
 v0.7.1. Consumed by SignalBots (its first host) since v0.1.4: the Landing table is
@@ -507,4 +599,7 @@ v0.5.1, v0.5.2), and the content-freshness engine — `keel_seo.freshness`, the
 `keel_seo.intent` plus the `keel_seo_intent_check` gate, first consumed by
 binaryoption.trading to resolve glossary-versus-pillar cannibalization (v0.7.0), plus
 `guarded_prefixes`, which requires every indexable page in a named section to declare
-the need it answers so a competitor cannot be written unnoticed (v0.7.1).
+the need it answers so a competitor cannot be written unnoticed (v0.7.1). v0.12.0 adds
+`keel_seo.keywords`, the market-side counterpart to the GSC client: autocomplete-only
+keyword-universe crawling, lexical clustering and priority ranking, with no key, no
+dependency and no model.

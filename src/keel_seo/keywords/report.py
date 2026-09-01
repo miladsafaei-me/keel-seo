@@ -1,0 +1,185 @@
+"""Write a crawl out three ways, for three different readers.
+
+JSON is the record a later run or another script reads. CSV is what goes into a
+spreadsheet next to volume, once a volume source exists. Markdown is what a
+person reads to decide what to build.
+
+All three carry the run's metadata, and the metadata always names the egress
+country rather than a requested one, because that is the only geography an
+autocomplete harvest actually has.
+"""
+from __future__ import annotations
+
+import csv
+import datetime as dt
+import json
+import os
+
+from .cluster import Cluster
+from .crawl import Universe
+
+CONTAMINATION_SAMPLE = 40
+
+
+def metadata(universe: Universe, clusters: list[Cluster], egress: dict,
+             client) -> dict:
+    return {
+        "seed": universe.seed,
+        "harvested_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "source": "google-autocomplete",
+        "endpoint_client": client.client,
+        "language": client.hl,
+        "vertical": client.ds or "web",
+        "egress_ip": egress.get("ip", ""),
+        "egress_country": egress.get("country", "unknown"),
+        "egress_org": egress.get("org", ""),
+        "phrases": len(universe.phrases),
+        "clusters": len(clusters),
+        "queries_asked": universe.queries_asked,
+        "network_calls": universe.network_calls,
+        "cache_hits": universe.cache_hits,
+        "errors": universe.errors,
+        "levels_run": universe.levels_run,
+        "unexpanded_phrases": universe.unexpanded,
+        "exhausted": universe.exhausted,
+        "stopped_by_rate_limit": universe.blocked,
+        "rate_limited_responses": universe.rate_limited,
+        "elapsed_seconds": round(universe.elapsed, 1),
+        "off_seed_rejected": len(universe.off_seed),
+        "per_level": universe.per_level,
+        "volume_note": (
+            "Autocomplete never returns search volume. priority ranks demand "
+            "shape (Google's own ordering, breadth of reach, relevance score, "
+            "depth) and is not a volume estimate."
+        ),
+    }
+
+
+def write_json(path: str, universe: Universe, clusters: list[Cluster],
+               meta: dict) -> None:
+    contamination = sorted(universe.off_seed.items(), key=lambda kv: -kv[1])
+    payload = {
+        "meta": meta,
+        "clusters": [c.as_row() for c in clusters],
+        "off_seed_sample": [
+            {"phrase": phrase, "times_returned": count}
+            for phrase, count in contamination[:CONTAMINATION_SAMPLE]
+        ],
+    }
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=1)
+
+
+def write_csv(path: str, clusters: list[Cluster]) -> None:
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            ["priority", "keyword", "cluster", "cluster_label", "intent",
+             "best_rank", "reach", "relevance", "level", "words"]
+        )
+        for cluster in clusters:
+            for phrase in cluster.members:
+                writer.writerow(
+                    [round(phrase.priority, 1), phrase.text, cluster.index,
+                     cluster.label, cluster.intent, phrase.best_rank, phrase.reach,
+                     phrase.max_relevance, phrase.first_level, phrase.words]
+                )
+
+
+def write_markdown(path: str, universe: Universe, clusters: list[Cluster],
+                   meta: dict, *, per_cluster: int = 12) -> None:
+    lines: list[str] = []
+    add = lines.append
+    add(f"# Keyword universe — `{universe.seed}`")
+    add("")
+    add(f"**Source:** Google autocomplete only ({meta['endpoint_client']} client, "
+        f"`hl={meta['language']}`, {meta['vertical']} vertical). "
+        f"**Egress:** {meta['egress_country']} ({meta['egress_ip']}) — autocomplete "
+        "geography is the requesting IP, never a parameter, so this is the market "
+        "the harvest actually reflects.")
+    add("")
+    add(f"**Harvested:** {meta['harvested_at']} · "
+        f"**{meta['phrases']:,} phrases** in **{meta['clusters']} clusters** from "
+        f"{meta['queries_asked']:,} queries in {meta['elapsed_seconds']}s.")
+    add("")
+    add("> Autocomplete returns no search volume, and no parameter exists that "
+        "would make it. `priority` below ranks demand *shape* — Google's own "
+        "ordering, how many independent expansions surfaced a phrase, its "
+        "relevance score and its depth. It is not a volume estimate and must not "
+        "be presented as one.")
+    add("")
+    if universe.blocked:
+        add(f"⚠️ **Google rate-limited this harvest** after "
+            f"{meta['network_calls']:,} requests and it stopped early, with "
+            f"{meta['unexpanded_phrases']:,} phrases left unexpanded. What is below "
+            "was collected before the block and is sound; it is not the complete "
+            "universe. Re-run later with a lower `--rate` — the cache means the "
+            "work already done is not repeated.")
+        add("")
+    elif not universe.exhausted:
+        add(f"⚠️ The crawl stopped with **{meta['unexpanded_phrases']:,} phrases "
+            "left unexpanded** (budget or level cap reached), so this universe is "
+            "wide but not closed. Re-run with a higher `--budget` / `--levels` to "
+            "continue; the cache makes the repeat work free.")
+        add("")
+    else:
+        add("✅ The crawl closed on its own: every phrase it found was re-seeded "
+            "and produced nothing new. This is the complete universe at this "
+            "grammar, language and egress.")
+        add("")
+
+    add("## Clusters, most valuable first")
+    add("")
+    add("| # | Cluster | Intent | Phrases | Priority | Head phrase |")
+    add("|---|---|---|---|---|---|")
+    for cluster in clusters:
+        add(f"| {cluster.index} | {cluster.label} | {cluster.intent} | "
+            f"{cluster.size} | {cluster.priority:.0f} | {cluster.head.text} |")
+    add("")
+
+    add("## Inside each cluster")
+    add("")
+    for cluster in clusters:
+        add(f"### {cluster.index}. {cluster.label} "
+            f"({cluster.intent}, {cluster.size} phrases)")
+        add("")
+        add("| Priority | Keyword | Rank | Reach | Level |")
+        add("|---|---|---|---|---|")
+        for phrase in cluster.members[:per_cluster]:
+            add(f"| {phrase.priority:.0f} | {phrase.text} | {phrase.best_rank} | "
+                f"{phrase.reach} | {phrase.first_level} |")
+        if cluster.size > per_cluster:
+            add(f"| | *…{cluster.size - per_cluster} more in the CSV* | | | |")
+        add("")
+
+    contamination = sorted(universe.off_seed.items(), key=lambda kv: -kv[1])
+    if contamination:
+        add("## Off-seed neighbours (contamination check)")
+        add("")
+        add("Phrases Google returned that do **not** contain the seed. A term "
+            "whose neighbours belong to another industry is a term whose traffic "
+            "will too.")
+        add("")
+        add("| Times returned | Phrase |")
+        add("|---|---|")
+        for phrase, count in contamination[:CONTAMINATION_SAMPLE]:
+            add(f"| {count} | {phrase} |")
+        add("")
+
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+
+
+def write_all(outdir: str, universe: Universe, clusters: list[Cluster],
+              meta: dict) -> dict[str, str]:
+    os.makedirs(outdir, exist_ok=True)
+    stem = "".join(c if c.isalnum() else "-" for c in universe.seed.lower()).strip("-")
+    paths = {
+        "json": os.path.join(outdir, f"{stem}.json"),
+        "csv": os.path.join(outdir, f"{stem}.csv"),
+        "md": os.path.join(outdir, f"{stem}.md"),
+    }
+    write_json(paths["json"], universe, clusters, meta)
+    write_csv(paths["csv"], clusters)
+    write_markdown(paths["md"], universe, clusters, meta)
+    return paths

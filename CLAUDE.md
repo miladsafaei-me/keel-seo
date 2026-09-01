@@ -18,7 +18,10 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
   freshness engine, the `keel_seo_freshness` command, the `{% last_updated %}` tag —
   see README's "Content freshness" section), `keel_seo.intent` (since v0.7.0: the
   one-intent-one-URL registry, its nine invariants and the `keel_seo_intent_check`
-  gate; `guarded_prefixes` since v0.7.1), and `keel_seo.gsc` — the connector, query
+  gate; `guarded_prefixes` since v0.7.1), `keel_seo.keywords` (since v0.12.0: the
+  market-side half — an autocomplete-only keyword-universe crawler, its lexical
+  clustering and its priority score; standard library only, no key, no model, see
+  README's "Keyword universe" section), and `keel_seo.gsc` — the connector, query
   registry, the recurring `pulse` measurement engine (since v0.8.0), the **complete
   Search Console API client** (since v0.11.0: `auth` for shared credentials/transport,
   `analytics` for the full Search Analytics surface, `inspection` for URL Inspection,
