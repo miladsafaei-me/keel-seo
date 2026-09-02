@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keel-seo"
-version = "0.15.1"
+version = "0.15.2"
 description = "Keel SEO — reusable Landing Registry, sitemap, noindex-by-default gate, intent registry, critical-CSS engine, a complete Google Search Console API client (Search Analytics, URL Inspection, Indexing, Sitemaps, Sites), and an autocomplete-only keyword-universe crawler with lexical clustering."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -30,6 +30,14 @@ proxies = [
 
 [project.urls]
 Homepage = "https://github.com/miladsafaei-me/keel-seo"
+
+# Required for the `proxies` extra: hatchling refuses a direct (git) reference in
+# optional-dependencies unless this is set, and no keel package is on PyPI, so a
+# direct reference is the only form that resolves. Without it the build fails at
+# metadata generation, not at install time, which makes it look like a broken
+# package rather than a missing flag.
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/keel_seo"]
