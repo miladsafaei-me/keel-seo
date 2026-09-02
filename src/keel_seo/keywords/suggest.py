@@ -49,6 +49,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Iterable, Iterator
 
+from .proxies import ProxyPool, fetch_through
+
 ENDPOINT = "https://suggestqueries.google.com/complete/search"
 
 # How many suggestions each client is allowed to return. `chrome` returns 50%
@@ -201,6 +203,7 @@ class SuggestClient:
     timeout: float = 15.0
     retries: int = 3
     rate: float = DEFAULT_RATE
+    pool: ProxyPool | None = None
     cache: SuggestCache = field(default_factory=lambda: SuggestCache(None))
     calls: int = 0
     errors: int = 0
@@ -228,11 +231,54 @@ class SuggestClient:
         with self._state:
             self._consecutive_blocks = 0
 
-    def _request(self, query: str) -> list | None:
+    def endpoint_url(self, query: str) -> str:
         params = {"client": self.client, "hl": self.hl, "q": query}
         if self.ds:
             params["ds"] = self.ds
-        url = f"{ENDPOINT}?{urllib.parse.urlencode(params)}"
+        return f"{ENDPOINT}?{urllib.parse.urlencode(params)}"
+
+    def _request_pooled(self, url: str) -> list | None:
+        """Ask through the pool, changing address rather than waiting on a refusal.
+
+        With one exit address a 403 is a wall to back off from. With a pool it is
+        information about one proxy: that address is spent, so it is evicted and
+        the next request goes out from somewhere else immediately. Backing off
+        would be the wrong response - nothing about the crawl is rate-limited,
+        only that one IP.
+
+        The breaker trips when the pool empties, which is the honest signal that
+        the run has no egress left rather than that it is going too fast.
+        """
+        assert self.pool is not None
+        attempts = max(self.retries, 1) * 2
+        for _ in range(attempts):
+            # No global throttle here: pacing is the pool's job, and it is
+            # per-address. A single client-wide rate would either starve a large
+            # pool or, once proxies are evicted, let the survivors exceed their
+            # own budgets - the two failure modes the per-proxy limits exist for.
+            proxy = self.pool.acquire()
+            if proxy is None:
+                raise RateLimited("proxy pool exhausted")
+            try:
+                status, body = fetch_through(proxy, url, self.timeout)
+            finally:
+                # Always release, on every path. A proxy left marked busy is
+                # permanently withdrawn from rotation, and enough of them
+                # deadlock the pool while it still reports itself healthy.
+                self.pool.release(proxy)
+            if status == 200 and body.startswith("["):
+                self.pool.report_ok(proxy)
+                return json.loads(body)
+            if status in BLOCK_CODES:
+                self.pool.report_blocked(proxy)
+                continue
+            self.pool.report_failure(proxy)
+        raise ConnectionError("no proxy in the pool answered")
+
+    def _request(self, query: str) -> list | None:
+        url = self.endpoint_url(query)
+        if self.pool is not None:
+            return self._request_pooled(url)
         request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         for attempt in range(self.retries):
             self._throttle.wait()

@@ -23,6 +23,7 @@ CONTAMINATION_SAMPLE = 40
 
 def metadata(universe: Universe, clusters: list[Cluster], egress: dict,
              client) -> dict:
+    pool = getattr(client, "pool", None)
     return {
         "seed": universe.seed,
         "harvested_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -46,6 +47,7 @@ def metadata(universe: Universe, clusters: list[Cluster], egress: dict,
         "rate_limited_responses": universe.rate_limited,
         "elapsed_seconds": round(universe.elapsed, 1),
         "off_seed_rejected": len(universe.off_seed),
+        "proxy_pool": pool.stats() if pool is not None else None,
         "per_level": universe.per_level,
         "volume_note": (
             "Autocomplete never returns search volume. priority ranks demand "
@@ -92,11 +94,20 @@ def write_markdown(path: str, universe: Universe, clusters: list[Cluster],
     add = lines.append
     add(f"# Keyword universe — `{universe.seed}`")
     add("")
-    add(f"**Source:** Google autocomplete only ({meta['endpoint_client']} client, "
-        f"`hl={meta['language']}`, {meta['vertical']} vertical). "
-        f"**Egress:** {meta['egress_country']} ({meta['egress_ip']}) — autocomplete "
-        "geography is the requesting IP, never a parameter, so this is the market "
-        "the harvest actually reflects.")
+    if meta["egress_country"] == "mixed":
+        add(f"**Source:** Google autocomplete only ({meta['endpoint_client']} client, "
+            f"`hl={meta['language']}`, {meta['vertical']} vertical). "
+            f"**Egress: mixed** — {meta['egress_org']}. Autocomplete answers by "
+            "requesting IP, so a rotating pool produces a deliberately "
+            "multi-country harvest. Read this as *what the term is asked, broadly* "
+            "rather than as one market's demand: some phrases below will be local "
+            "to a single country, and the exact mix is not reproducible.")
+    else:
+        add(f"**Source:** Google autocomplete only ({meta['endpoint_client']} client, "
+            f"`hl={meta['language']}`, {meta['vertical']} vertical). "
+            f"**Egress:** {meta['egress_country']} ({meta['egress_ip']}) — autocomplete "
+            "geography is the requesting IP, never a parameter, so this is the market "
+            "the harvest actually reflects.")
     add("")
     add(f"**Harvested:** {meta['harvested_at']} · "
         f"**{meta['phrases']:,} phrases** in **{meta['clusters']} clusters** from "
