@@ -135,7 +135,7 @@ def crawl(
     client: SuggestClient,
     *,
     levels: int = 2,
-    budget: int = 12000,
+    budget: int = 150000,
     saturate: int = 1,
     frontier_cap: int = 300,
     tight: bool = True,

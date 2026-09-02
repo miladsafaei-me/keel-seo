@@ -550,6 +550,18 @@ client's capacity, so a *full* response means Google truncated it and something
 is hidden behind it; that query is re-asked with each letter appended. A short
 response is left alone — that corner of the space is already fully reported.
 
+**Let it stop on its own.** A run ends by converging — a level that discovers
+nothing new — or by exhausting `--levels`. `--budget` is a runaway guard set well
+above the structural ceiling (~73,000 queries at the default `--levels 2
+--frontier 300`), not a plan. It was 12,000 until 2026-09-02, which meant every
+large seed was silently cut at about a sixth of its own space; if a report says
+*"stopped with N phrases left unexpanded"*, that is what happened.
+
+Throughput, not budget, is the real limit: it is roughly `live proxies x 200/hour`,
+because each address is deliberately capped at 200 requests an hour. The way to go
+faster is more addresses (`--proxy-want`), never a looser per-address limit — that
+limit is what keeps the addresses alive.
+
 **Re-seed and repeat.** Every returned phrase that contains the seed becomes the
 next round's seed. Each level discovers less than the last, and when a level
 discovers nothing the universe is closed — the report says so explicitly rather

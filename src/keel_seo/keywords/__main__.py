@@ -30,8 +30,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", default=".", help="directory for the three output files")
     parser.add_argument("--levels", type=int, default=2,
                         help="re-seeding rounds after the seed itself (default 2)")
-    parser.add_argument("--budget", type=int, default=12000,
-                        help="hard cap on queries asked (default 12000)")
+    parser.add_argument("--budget", type=int, default=150000,
+                        help=("runaway guard on queries asked (default 150000). "
+                              "It is NOT the plan: --levels and --frontier already "
+                              "bound a run structurally (~73k at the defaults), and "
+                              "a crawl normally ends by converging. Lower it only to "
+                              "deliberately cut a run short"))
     parser.add_argument("--saturate", type=int, default=1,
                         help="drill rounds under each truncated response (default 1)")
     parser.add_argument("--frontier", type=int, default=300,
