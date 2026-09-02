@@ -12,7 +12,8 @@ import unittest
 
 from keel_seo.keywords import cluster as clustering
 from keel_seo.keywords.crawl import Universe, contains_seed, crawl, score, seed_tokens
-from keel_seo.keywords.grammar import BRANCH, DRILL, SEED, expansions
+from keel_seo.keywords.grammar import (BRANCH, DRILL, SEED, expansions,
+                                       star_variants)
 from keel_seo.keywords.proxying import accept_suggestions
 from keel_seo.keywords.suggest import Response, SuggestCache, SuggestClient, Suggestion
 
@@ -52,6 +53,31 @@ class GrammarTests(unittest.TestCase):
         self.assertIn("is quotex", queries, "prefix word missing")
         self.assertIn("quotex vs", queries, "suffix word missing")
         self.assertIn("quotex", queries, "the bare seed must be asked too")
+
+    def test_a_star_walks_every_gap_between_words(self):
+        """The family that reaches phrases where the term is not the leading text."""
+        self.assertEqual(star_variants("quotex signal bot"),
+                         ["quotex * signal bot", "quotex signal * bot"])
+
+    def test_a_single_word_term_has_no_gap_to_walk(self):
+        self.assertEqual(star_variants("quotex"), [])
+
+    def test_the_seed_tier_asks_everything_twice_with_a_leading_space(self):
+        queries = expansions("quotex", SEED)
+        self.assertIn(" quotex", queries, "a leading space is its own family")
+        self.assertIn(" quotex a", queries)
+        self.assertEqual(sum(1 for q in queries if q.startswith(" ")), len(queries) // 2)
+
+    def test_a_trailing_space_is_never_asked(self):
+        """Google trims it, so the query is byte-identical to the bare one."""
+        for tier in (SEED, BRANCH, DRILL):
+            self.assertFalse(any(q.endswith(" ") for q in expansions("quotex bot", tier)),
+                             f"{tier} emitted a trailing-space query, which is a "
+                             "duplicate request for identical data")
+
+    def test_branch_phrases_get_star_variants(self):
+        queries = expansions("quotex signal bot", BRANCH)
+        self.assertIn("quotex * signal bot", queries)
 
     def test_tight_sweep_can_be_switched_off(self):
         self.assertNotIn("quotexa", expansions("quotex", SEED, tight=False))

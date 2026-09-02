@@ -29,9 +29,22 @@ question and comparison shapes; ``is quotex`` returned ``is quotex legal in
 india``, ``is quotex legit``, ``is quotex trading halal``, none of which appears
 under any letter sweep.
 
-A fifth family, the ``*`` wildcard, is implemented and off by default: measured
-against ``quotex * strategy`` and ``best * quotex`` it returned either what the
-other families already produce, or noise from other industries.
+*Mid-phrase star* — ``quotex * signal bot``, ``quotex signal * bot``: a ``*``
+walked through every gap between words, which Google fills. This is the
+highest-yield family in the grammar and the only one that reaches phrases where
+the term is **not the leading text**. Measured against a finished 2,869-phrase
+``quotex`` universe, 900 of these returned **1,346 phrases nothing else found** —
+1.5 new per query, against a 0.1 bar. Examples: ``best indicator for quotex
+trading``, ``ai trading bot quotex otc``, ``affiliate center quotex``.
+
+*Leading space* — every seed-tier query asked a second time with one space in
+front. ``" quotex"`` and ``"quotex"`` are different queries to this endpoint;
+0.286 new phrases per query.
+
+A **trailing** space is deliberately absent. Google trims it, so ``"quotex "``
+came back byte-identical to ``"quotex"``: asking both would double the request
+count for exactly zero new data. The fixed ``WILDCARD_TEMPLATES`` remain off by
+default, superseded by the gap-walk above.
 """
 from __future__ import annotations
 
@@ -74,8 +87,9 @@ BRANCH_SUFFIX_WORDS = (
 )
 BRANCH_PREFIX_WORDS = ("how to", "what is", "best", "is", "why", "free")
 
-# Wildcard templates, off by default. Kept because the endpoint does honour `*`
-# and a future seed may sit in a phrase shape the other families miss.
+# Wildcard templates, off by default. Superseded for practical purposes by the
+# mid-phrase `*` below, which is measured and on; these fixed shapes are kept only
+# because a future seed may sit in a phrase the gap-walk cannot reach.
 WILDCARD_TEMPLATES = ("{term} * {tail}", "best * {term}", "{term} * app")
 
 SEED = "seed"
@@ -83,17 +97,48 @@ BRANCH = "branch"
 DRILL = "drill"
 
 
+def star_variants(term: str) -> list[str]:
+    """Walk a `*` through every gap between the term's words.
+
+    ``quotex signal bot`` becomes ``quotex * signal bot`` and
+    ``quotex signal * bot``. Google fills the gap, and what it fills it with is
+    the family every other attachment misses: phrases where the term is **not
+    the leading text**. Measured against a finished 2,869-phrase `quotex`
+    universe, 900 of these queries returned **1,346 phrases the rest of the
+    grammar never found** — 1.5 new phrases per query, where the bar for adding
+    a family at all was 0.1. What came back is exactly the shape that was
+    missing: ``best indicator for quotex trading``, ``ai trading bot quotex
+    otc``, ``affiliate center quotex``.
+
+    Single-word terms have no internal gap and yield nothing here; they are
+    reached by the prefix families instead.
+    """
+    words = term.split()
+    if len(words) < 2:
+        return []
+    return [" ".join(words[:i]) + " * " + " ".join(words[i:])
+            for i in range(1, len(words))]
+
+
 def _dedupe(queries: Iterable[str]) -> list[str]:
     """Preserve order while dropping repeats.
 
     Families overlap by construction — ``is`` is both a prefix word and a suffix
     word — and every duplicate is a wasted request.
+
+    Internal whitespace is collapsed but **a single leading space is kept**,
+    because it is not formatting: ``" quotex"`` and ``"quotex"`` return different
+    answers, and normalising it away would silently delete a whole family. A
+    *trailing* space is not preserved, and deliberately so — Google trims it, so
+    ``"quotex "`` came back byte-identical to ``"quotex"`` and asking both would
+    double the request count for nothing.
     """
     seen: set[str] = set()
     ordered: list[str] = []
     for query in queries:
-        query = " ".join(query.split())
-        if query and query not in seen:
+        lead = " " if query.startswith(" ") else ""
+        query = lead + " ".join(query.split())
+        if query.strip() and query not in seen:
             seen.add(query)
             ordered.append(query)
     return ordered
@@ -122,6 +167,11 @@ def expansions(term: str, tier: str = SEED, *, tight: bool = True,
     if tier == BRANCH:
         queries += [f"{term} {w}" for w in BRANCH_SUFFIX_WORDS]
         queries += [f"{w} {term}" for w in BRANCH_PREFIX_WORDS]
+        # The highest-yield family in the whole grammar, and the only one that
+        # reaches phrases where the term is not the leading text. Branch phrases
+        # are multi-word by the time they get here, which is exactly where it
+        # applies.
+        queries += star_variants(term)
         return _dedupe(queries)
 
     if tight:
@@ -130,6 +180,11 @@ def expansions(term: str, tier: str = SEED, *, tight: bool = True,
     queries += [f"{d} {term}" for d in DIGITS]
     queries += [f"{w} {term}" for w in PREFIX_WORDS]
     queries += [f"{term} {w}" for w in SUFFIX_WORDS]
+    queries += star_variants(term)
+    # A leading space is its own family: " quotex" and "quotex" return different
+    # answers, and asking every seed-tier query both ways returned 0.286 new
+    # phrases per query — nearly three times the bar for keeping a family.
+    queries += [f" {q}" for q in queries]
     if wildcards:
         queries += [
             template.format(term=term, tail=tail)
