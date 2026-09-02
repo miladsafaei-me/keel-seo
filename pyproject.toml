@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keel-seo"
-version = "0.15.0"
+version = "0.15.1"
 description = "Keel SEO — reusable Landing Registry, sitemap, noindex-by-default gate, intent registry, critical-CSS engine, a complete Google Search Console API client (Search Analytics, URL Inspection, Indexing, Sitemaps, Sites), and an autocomplete-only keyword-universe crawler with lexical clustering."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,7 +19,14 @@ gsc = ["google-api-python-client>=2.0", "google-auth>=2.0", "openpyxl>=3.0"]
 # Proxy rotation for keel_seo.keywords is keel-crawler's capability, not this
 # package's; it is soft-imported so a host that only wants the Landing registry
 # does not install a crawler. See keel_seo/keywords/proxying.py.
-proxies = ["keel-crawler>=0.9.0"]
+#
+# A direct git reference, not a version range: no keel package is published to
+# PyPI, so "keel-crawler>=0.9.0" resolves to nothing and pip fails with "No
+# matching distribution found" - which is exactly what it did on the production
+# host. Every keel consumer already pins these by git tag for the same reason.
+proxies = [
+    "keel-crawler @ git+https://github.com/miladsafaei-me/keel-crawler@v0.9.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/miladsafaei-me/keel-seo"
