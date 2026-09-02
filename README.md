@@ -525,13 +525,25 @@ its fifteen most popular continuations and hides the rest. The crawler gets past
 that by asking the same term many times with something different attached, then
 re-seeding from what comes back.
 
-**Surround the term.** Four families of attachment, each reaching phrases the
+**Surround the term.** Six families of attachment, each reaching phrases the
 others cannot: a spaced suffix sweep (`quotex a` … `quotex z`, plus digits), a
 tight suffix sweep with no space (`quotexa` → `quotexapk`), a spaced *prefix*
-sweep (`a quotex` → `is quotex a broker`, which is how phrases with the term in
-the middle or at the end are reached at all), and real words on both sides
-(`is quotex` → `is quotex legal in india`; `quotex vs` → `quotex vs pocket
-option`). 189 queries for the seed, 55 for each phrase discovered after it.
+sweep (`a quotex` → `is quotex a broker`), real words on both sides (`is quotex`
+→ `is quotex legal in india`; `quotex vs` → `quotex vs pocket option`), a **`*`
+walked through every gap between words** (`quotex * signal bot`), and every
+seed-tier query asked again with a **leading space**, which this endpoint treats
+as a different query. 378 queries for the seed, 57 for each phrase discovered
+after it.
+
+The last two were added on measurement rather than intuition. Against a finished
+2,869-phrase `quotex` universe, the gap-walk returned **1,346 phrases nothing
+else had found** (1.5 per query, against a 0.1 bar for keeping a family) and the
+leading space 54 more (0.29 per query) — together a **48% enlargement**. The
+gap-walk matters most because it is the only family that reaches phrases the term
+does *not* lead: `best indicator for quotex trading`, `affiliate center quotex`.
+A **trailing** space was tested in the same pass and rejected: Google trims it, so
+it returns byte-identical results and would have doubled the request count for
+nothing.
 
 **Drill only where evidence says there is more.** A response is capped at the
 client's capacity, so a *full* response means Google truncated it and something
