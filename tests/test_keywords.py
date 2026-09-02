@@ -7,6 +7,7 @@ tested against fixed inputs.
 Run: DJANGO_SETTINGS_MODULE=tests.settings python -m django test tests.test_keywords
      python -m unittest tests.test_keywords
 """
+import os
 import unittest
 
 from keel_seo.keywords import cluster as clustering
@@ -212,6 +213,55 @@ class RateLimitTests(unittest.TestCase):
         self.assertIn("quotex login", universe.phrases)
         self.assertLess(universe.queries_asked, 5000,
                         "a blocked crawl must stop, not spend the whole budget")
+
+
+class WorkbookTests(unittest.TestCase):
+    """The .xlsx is optional, and its absence must cost only the workbook."""
+
+    def universe(self):
+        from keel_seo.keywords.crawl import Phrase
+
+        u = Universe(seed="quotex")
+        for i, text in enumerate(["quotex login", "quotex login page", "quotex apk"]):
+            phrase = Phrase(text, 1 + i, 600 - i, 0)
+            phrase.parents = {f"q{i}"}
+            u.phrases[text] = phrase
+        u.off_seed = {"quotes meaning in urdu": 4}
+        score(u)
+        return u
+
+    def test_the_other_three_formats_survive_a_missing_openpyxl(self):
+        import builtins
+        import tempfile
+
+        from keel_seo.keywords import report
+
+        universe = self.universe()
+        clusters = clustering.build(universe)
+        real_import = builtins.__import__
+
+        def no_openpyxl(name, *args, **kwargs):
+            if name.startswith("openpyxl"):
+                raise ImportError("simulated: openpyxl not installed")
+            return real_import(name, *args, **kwargs)
+
+        # Real metadata, not a stub: write_markdown reads a dozen fields and a
+        # half-filled dict would fail this test for the wrong reason.
+        meta = report.metadata(universe, clusters,
+                               {"ip": "1.2.3.4", "country": "TR", "org": "test"},
+                               SuggestClient(cache=SuggestCache(None), rate=0))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            builtins.__import__ = no_openpyxl
+            try:
+                paths = report.write_all(tmp, universe, clusters, meta)
+            finally:
+                builtins.__import__ = real_import
+            self.assertNotIn("xlsx", paths, "no workbook without the library")
+            for kind in ("json", "csv", "md"):
+                self.assertIn(kind, paths)
+                self.assertTrue(os.path.getsize(paths[kind]) > 0,
+                                f"{kind} must still be written")
 
 
 class ProxySeamTests(unittest.TestCase):

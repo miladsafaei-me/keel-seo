@@ -509,9 +509,14 @@ python -m keel_seo.keywords quotex --out ./keywords
 python -m keel_seo.keywords "pip value calculator" --levels 2 --rate 5
 ```
 
-Three files come out, all in priority order: `<seed>.json` (the full record,
-every signal per phrase), `<seed>.csv` (flat, for a spreadsheet), and `<seed>.md`
-(clusters, intents and the contamination check, for a person).
+Four files come out, all in priority order: `<seed>.json` (the full record, every
+signal per phrase), `<seed>.csv` (flat), `<seed>.md` (clusters, intents and the
+contamination check, for a person), and `<seed>.xlsx` — the working spreadsheet,
+with a **Keywords** sheet (frozen header, autofilter, cluster and intent on every
+row), a **Clusters** sheet (one row per topic, which is the unit a page is built
+against), a **Run** sheet carrying the provenance and the volume caveat, and an
+**Off-seed** sheet for the contamination check. The workbook needs
+`pip install 'keel-seo[xlsx]'`; the other three are stdlib and always written.
 
 ### How one seed becomes a universe
 
