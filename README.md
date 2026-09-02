@@ -30,9 +30,9 @@ platform model, and this repo's [`CLAUDE.md`](CLAUDE.md) for the contract.
   Landing table by `manage.py keel_seo_intent_check --strict`. See below.
 - `keel_seo.keywords` (since v0.12.0) — market-side keyword research from Google
   autocomplete alone: crawls one seed's whole query universe, clusters it by shared
-  wording and ranks it. Standard library only, no API key. Since v0.14.0 it can run
-  through a rotating pool of validated free proxies, each paced on its own
-  per-second/minute/hour budget, so one blocked IP cannot end the research. See below.
+  wording and ranks it. Standard library only, no API key. Can run through
+  keel-crawler's rotating proxy pool (`pip install 'keel-seo[proxies]'`) so one
+  blocked IP cannot end the research. See below.
 
 ## Consume it (host wiring)
 
@@ -625,54 +625,37 @@ starts its own namespace rather than quietly inheriting another market's answers
 
 A single exit address is one mistake away from losing the source for a day, and
 the measured block outlasted **sixteen hours**. `--proxies auto` removes that
-single point of failure: it collects free proxies from several public lists,
-validates each one **against the autocomplete endpoint itself**, and rotates a
-crawl across whatever answered.
+single point of failure by rotating the crawl across many addresses.
 
 ```bash
+pip install 'keel-seo[proxies]'
 python -m keel_seo.keywords quotex --proxies auto --proxy-want 60
 ```
 
-Validating against the target matters — a proxy that cheerfully fetches
-`httpbin.org` may still be refused by Google, and only asking Google reveals it.
-Of 600 sampled proxies, 37 returned a clean 200 with real suggestions; but among
-the ones actually *alive*, two thirds got through, so Google is not broadly
-refusing free proxy addresses. The pool is simply mostly dead, which is why the
-default validates 900 candidates to keep 60.
+**The rotation itself is not this package's.** It lives in **keel-crawler**
+(`keel_crawler.proxy.pool`), which owns harvesting from sixteen published lists,
+the durable self-pruning store, per-target block memory, and the per-address
+budgets that keep each proxy from being blocked in turn — see that package's
+README for the ageing rules and the maintenance CLI
+(`python -m keel_crawler.proxy`). Any Keel project needing proxy rotation should
+use it rather than growing its own; this was keel-seo's own mistake first, and
+the code moved out in v0.15.0.
 
-**Each address is paced on three timescales at once** — by default one request
-per 5 seconds, 10 per minute and 200 per hour (`--proxy-rps`,
-`--proxy-per-minute`, `--proxy-per-hour`). A single client-wide rate is not
-enough: as proxies are evicted the survivors absorb the whole rate, so the last
-few inherit exactly the traffic that got the first ones blocked. Capping all
-three timescales also hedges the open question of whether the trigger is rate or
-cumulative count, and 200/hour leaves each address an order of magnitude under
-the only figure known to have tripped a block.
+What stays here is the one endpoint-specific piece: what counts as a real
+autocomplete answer (`keel_seo/keywords/proxying.py`). A proxy returning a
+captive-portal page also answers 200, and without that check it would be admitted
+to the pool and then fail every real request. The import is soft — a host that
+only wants the Landing registry does not install a crawler, and `--proxies` says
+what to install rather than failing obscurely.
 
-Work spreads rather than queueing. A proxy already mid-request is never handed
-out again, so worker threads land on different addresses instead of colliding on
-one; selection is least-recently-used rather than round-robin, which stays even
-as the pool shrinks; and nothing is issued before its own budget allows it. The
-throughput ceiling is therefore roughly `pool size × per-proxy rate` — 60 proxies
-give about 12 q/s and 12,000 requests an hour, from sixty separate budgets.
-
-A 403 through the pool is not a rate limit, it is one spent address: that proxy
-is evicted immediately and the next request leaves from somewhere else, with no
-backoff. The circuit breaker trips only when the pool empties, which is the
-honest signal that the run has no egress left.
-
-**The harvest is multi-country by construction**, and the report says so instead
-of naming a country. Autocomplete answers by IP, so a rotating pool returns some
-phrases local to whichever exit surfaced them, and the exact mix is not
-reproducible. Read a pooled harvest as *what the term is asked, broadly*. Use a
-direct run, or an egress pinned to one country, when a single market is the
-question.
-
-Proxy mode shells out to `curl` — it speaks SOCKS5 without a Python dependency,
-and it accepts `--noproxy ""`. That flag is not optional: with `NO_PROXY=*` in
-the environment, urllib **silently ignores an explicit proxy** and connects
-directly, so the code appears to rotate while every request leaves from the one
-address the pool exists to stop using.
+Two consequences for the output. **The harvest is multi-country by construction**,
+and the report says so instead of naming a country: autocomplete answers by IP,
+so a rotating pool returns some phrases local to whichever exit surfaced them,
+and the exact mix is not reproducible. Read a pooled harvest as *what the term is
+asked, broadly*; use a direct run, or an egress pinned to one country, when a
+single market is the question. And a 403 through the pool is not a rate limit but
+one spent address — evicted immediately, no backoff — so the circuit breaker
+trips only when the pool empties.
 
 ## Status
 

@@ -8,8 +8,9 @@ import sys
 from . import cluster as clustering
 from .crawl import crawl
 from .report import metadata, write_all
-from .proxies import (PER_PROXY_PER_HOUR, PER_PROXY_PER_MINUTE, PER_PROXY_RPS,
-                      ProxyPool)
+from .proxying import (AVAILABLE as PROXIES_AVAILABLE, MISSING_MESSAGE,
+                       PER_PROXY_PER_HOUR, PER_PROXY_PER_MINUTE, PER_PROXY_RPS,
+                       ProxyPool, accept_suggestions)
 from .suggest import DEFAULT_RATE, SuggestCache, SuggestClient, egress_identity
 
 
@@ -57,9 +58,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="also ask '*' templates (measured as low yield)")
     parser.add_argument("--proxies", default="off", metavar="MODE",
                         help=("'off' (default) asks directly from this machine; "
-                              "'auto' builds a rotating pool of free proxies, each "
-                              "validated against the endpoint itself. Use it when "
-                              "this IP is blocked, or to keep from blocking it"))
+                              "'auto' rotates over a pool of free proxies, each "
+                              "validated against the endpoint itself. Needs "
+                              "keel-crawler: pip install 'keel-seo[proxies]'"))
     parser.add_argument("--proxy-want", type=int, default=60,
                         help="how many working proxies to collect (default 60)")
     parser.add_argument("--proxy-candidates", type=int, default=900,
@@ -92,10 +93,17 @@ def main(argv: list[str] | None = None) -> int:
     # country's exit.
     pool = None
     if args.proxies != "off":
+        if not PROXIES_AVAILABLE:
+            print(MISSING_MESSAGE, file=sys.stderr)
+            return 1
         probe_url = SuggestClient(hl=args.hl, ds=args.ds,
                                   client=args.client).endpoint_url("test")
+        # accept= is the endpoint-specific half: a captive portal also answers
+        # 200, and would otherwise be admitted to the pool and then fail every
+        # real request.
         pool = ProxyPool.build(probe_url, want=args.proxy_want,
                                candidates=args.proxy_candidates,
+                               accept=accept_suggestions, target="suggestqueries.google.com",
                                rps=args.proxy_rps, per_minute=args.proxy_per_minute,
                                per_hour=args.proxy_per_hour, progress=progress)
         if not len(pool):

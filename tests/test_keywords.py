@@ -12,7 +12,7 @@ import unittest
 from keel_seo.keywords import cluster as clustering
 from keel_seo.keywords.crawl import Universe, contains_seed, crawl, score, seed_tokens
 from keel_seo.keywords.grammar import BRANCH, DRILL, SEED, expansions
-from keel_seo.keywords.proxies import FAILURE_LIMIT, Proxy, ProxyPool
+from keel_seo.keywords.proxying import accept_suggestions
 from keel_seo.keywords.suggest import Response, SuggestCache, SuggestClient, Suggestion
 
 
@@ -214,92 +214,25 @@ class RateLimitTests(unittest.TestCase):
                         "a blocked crawl must stop, not spend the whole budget")
 
 
-class ProxyPoolTests(unittest.TestCase):
-    """Many proxies at once, each of them gently - the pool's whole job."""
+class ProxySeamTests(unittest.TestCase):
+    """What stays here: the endpoint-specific half of proxy verification.
 
-    def pool(self, n=4, **kw):
-        opts = {"rps": 1000.0, "per_minute": 0, "per_hour": 0}
-        opts.update(kw)
-        return ProxyPool(live=[Proxy(f"10.0.0.{i}:8080", "http") for i in range(n)], **opts)
+    Rotation, the durable store and its ageing policy belong to keel-crawler
+    (`keel_crawler.proxy.pool`) and are tested there — this package only decides
+    what a usable answer from *this* endpoint looks like.
+    """
 
-    def test_socks_proxies_resolve_dns_at_the_proxy(self):
-        self.assertTrue(Proxy("1.2.3.4:1080", "socks5").url.startswith("socks5h://"))
-        self.assertTrue(Proxy("1.2.3.4:8080", "http").url.startswith("http://"))
+    def test_a_real_autocomplete_answer_is_accepted(self):
+        self.assertTrue(accept_suggestions(200, '["quotex",["quotex login"]]'))
 
-    def test_work_spreads_over_the_pool_rather_than_repeating_one(self):
-        pool = self.pool(4)
-        picks = []
-        for _ in range(4):
-            p = pool.acquire()
-            picks.append(p.addr)
-            pool.release(p)
-        self.assertEqual(len(set(picks)), 4, "all four proxies should have been used")
+    def test_a_captive_portal_is_rejected_despite_its_200(self):
+        self.assertFalse(accept_suggestions(200, "<html><body>Login required</body></html>"),
+                         "a proxy returning an interstitial would otherwise join the "
+                         "pool and then fail every real request")
 
-    def test_a_busy_proxy_is_never_handed_out_twice(self):
-        pool = self.pool(2)
-        first = pool.acquire()
-        second = pool.acquire()
-        self.assertNotEqual(first.addr, second.addr)
-        self.assertIsNone(pool.acquire(max_wait=0.2),
-                          "with both proxies in flight there is nothing to hand out")
-        pool.release(first)
-        self.assertEqual(pool.acquire(max_wait=1.0).addr, first.addr)
-
-    def test_the_per_second_budget_paces_a_single_proxy(self):
-        import time as _t
-
-        pool = self.pool(1, rps=5.0)          # one request per 200ms
-        first = pool.acquire(); pool.release(first)
-        started = _t.monotonic()
-        second = pool.acquire(max_wait=3.0); pool.release(second)
-        self.assertGreaterEqual(_t.monotonic() - started, 0.15)
-
-    def test_the_per_minute_cap_stops_a_proxy_after_its_quota(self):
-        pool = self.pool(1, rps=1000.0, per_minute=3)
-        for _ in range(3):
-            p = pool.acquire(max_wait=1.0)
-            self.assertIsNotNone(p)
-            pool.release(p)
-        self.assertIsNone(pool.acquire(max_wait=0.3),
-                          "the fourth call in the same minute must be refused")
-
-    def test_the_per_hour_cap_is_enforced_too(self):
-        pool = self.pool(1, rps=1000.0, per_minute=0, per_hour=2)
-        for _ in range(2):
-            p = pool.acquire(max_wait=1.0); pool.release(p)
-        self.assertIsNone(pool.acquire(max_wait=0.3))
-
-    def test_a_refusal_from_the_target_evicts_the_proxy_at_once(self):
-        pool = self.pool(3)
-        victim = pool.acquire(); pool.release(victim)
-        pool.report_blocked(victim)
-        self.assertEqual(len(pool), 2)
-        self.assertEqual(pool.stats()["blocked_by_target"], 1)
-        for _ in range(6):
-            p = pool.acquire(max_wait=0.5)
-            if p:
-                self.assertNotEqual(p.addr, victim.addr)
-                pool.release(p)
-
-    def test_a_flaky_proxy_survives_one_failure_but_not_a_run_of_them(self):
-        pool = self.pool(2)
-        flaky = pool.live[0]
-        for _ in range(FAILURE_LIMIT - 1):
-            pool.report_failure(flaky)
-        self.assertEqual(len(pool), 2, "free proxies are erratic; one timeout is not death")
-        pool.report_failure(flaky)
-        self.assertEqual(len(pool), 1)
-        self.assertEqual(pool.stats()["retired_unreliable"], 1)
-
-    def test_an_empty_pool_reports_no_egress_rather_than_blocking_forever(self):
-        pool = ProxyPool(live=[])
-        self.assertIsNone(pool.acquire(max_wait=5.0))
-
-    def test_a_crawl_whose_pool_empties_stops_and_keeps_its_results(self):
-        pool = ProxyPool(live=[])
-        client = SuggestClient(cache=SuggestCache(None), rate=0, pool=pool)
-        response = client.fetch("quotex")
-        self.assertIn("rate-limited", response.error or "")
+    def test_a_refusal_or_an_empty_body_is_rejected(self):
+        self.assertFalse(accept_suggestions(403, "[]"))
+        self.assertFalse(accept_suggestions(200, "   "))
 
 
 class ScoreTests(unittest.TestCase):

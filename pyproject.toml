@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keel-seo"
-version = "0.14.0"
+version = "0.15.0"
 description = "Keel SEO — reusable Landing Registry, sitemap, noindex-by-default gate, intent registry, critical-CSS engine, a complete Google Search Console API client (Search Analytics, URL Inspection, Indexing, Sitemaps, Sites), and an autocomplete-only keyword-universe crawler with lexical clustering."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,6 +16,10 @@ dependencies = ["Django>=4.2"]
 # pull Search Console data carries none of these. Install with: pip install 'keel-seo[gsc]'
 [project.optional-dependencies]
 gsc = ["google-api-python-client>=2.0", "google-auth>=2.0", "openpyxl>=3.0"]
+# Proxy rotation for keel_seo.keywords is keel-crawler's capability, not this
+# package's; it is soft-imported so a host that only wants the Landing registry
+# does not install a crawler. See keel_seo/keywords/proxying.py.
+proxies = ["keel-crawler>=0.9.0"]
 
 [project.urls]
 Homepage = "https://github.com/miladsafaei-me/keel-seo"

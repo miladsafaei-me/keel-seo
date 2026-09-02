@@ -49,7 +49,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Iterable, Iterator
 
-from .proxies import ProxyPool, fetch_through
+from .proxying import fetch_through
 
 ENDPOINT = "https://suggestqueries.google.com/complete/search"
 
@@ -203,7 +203,7 @@ class SuggestClient:
     timeout: float = 15.0
     retries: int = 3
     rate: float = DEFAULT_RATE
-    pool: ProxyPool | None = None
+    pool: object | None = None
     cache: SuggestCache = field(default_factory=lambda: SuggestCache(None))
     calls: int = 0
     errors: int = 0
