@@ -63,6 +63,10 @@ def build_parser() -> argparse.ArgumentParser:
                               "keel-crawler: pip install 'keel-seo[proxies]'"))
     parser.add_argument("--proxy-want", type=int, default=60,
                         help="how many working proxies to collect (default 60)")
+    parser.add_argument("--proxy-start-at", type=int, default=10,
+                        help=("start crawling once this many proxies answer (default "
+                              "10); the rest keep verifying in the background and join "
+                              "rotation as they pass"))
     parser.add_argument("--proxy-candidates", type=int, default=900,
                         help=("how many candidates to validate to find them "
                               "(default 900; the measured hit rate is ~6%%)"))
@@ -102,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
         # 200, and would otherwise be admitted to the pool and then fail every
         # real request.
         pool = ProxyPool.build(probe_url, want=args.proxy_want,
+                               start_at=args.proxy_start_at,
                                candidates=args.proxy_candidates,
                                accept=accept_suggestions, target="suggestqueries.google.com",
                                rps=args.proxy_rps, per_minute=args.proxy_per_minute,

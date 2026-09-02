@@ -641,6 +641,10 @@ README for the ageing rules and the maintenance CLI
 use it rather than growing its own; this was keel-seo's own mistake first, and
 the code moved out in v0.15.0.
 
+The crawl starts as soon as ten proxies answer (`--proxy-start-at`) and the pool
+keeps filling in the background, so a run begins in seconds instead of waiting out
+a full verification pass.
+
 What stays here is the one endpoint-specific piece: what counts as a real
 autocomplete answer (`keel_seo/keywords/proxying.py`). A proxy returning a
 captive-portal page also answers 200, and without that check it would be admitted
