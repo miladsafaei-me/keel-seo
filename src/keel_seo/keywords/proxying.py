@@ -22,6 +22,7 @@ from __future__ import annotations
 try:
     from keel_crawler.proxy.pool import (PER_PROXY_PER_HOUR, PER_PROXY_PER_MINUTE,
                                          PER_PROXY_RPS, ProxyPool, fetch_through)
+    from keel_crawler.proxy.sources import normalize_country
 
     AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised by hosts without the extra
@@ -33,6 +34,10 @@ except ImportError:  # pragma: no cover - exercised by hosts without the extra
     PER_PROXY_RPS = 0.2
     PER_PROXY_PER_MINUTE = 10
     PER_PROXY_PER_HOUR = 200
+
+    def normalize_country(label: str) -> str:  # noqa: D103 - trivial stand-in
+        label = (label or "").strip()
+        return label.upper() if len(label) == 2 and label.isalpha() else ""
 
 MISSING_MESSAGE = (
     "proxy rotation lives in keel-crawler, which is not installed. "

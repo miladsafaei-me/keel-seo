@@ -29,6 +29,7 @@ import time
 from dataclasses import dataclass, field
 
 from .grammar import BRANCH, DRILL, SEED, expansions
+from .proxying import normalize_country
 from .suggest import SuggestClient
 
 # How the crawl signals combine into one comparable number.
@@ -216,9 +217,14 @@ def crawl(
                     phrase.best_rank = min(phrase.best_rank, suggestion.rank)
                     phrase.max_relevance = max(phrase.max_relevance, suggestion.relevance)
                 phrase.parents.add(response.query)
-                if response.country:
-                    phrase.countries[response.country] = (
-                        phrase.countries.get(response.country, 0) + 1)
+                # Normalised on the way IN, not only where it is stored: the
+                # published lists say "United States" and the geolocation service
+                # says "US", and a cache written before this fix still holds the
+                # older mixed forms. Converting here means data already collected
+                # comes out consistent instead of needing to be gathered again.
+                origin = normalize_country(response.country)
+                if origin:
+                    phrase.countries[origin] = phrase.countries.get(origin, 0) + 1
         if client.blocked:
             # Google has started refusing us. Everything already collected is
             # kept and written out; continuing would only convert budget into
