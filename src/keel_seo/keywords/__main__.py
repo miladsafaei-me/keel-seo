@@ -44,7 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help=("cluster similarity cut, 0-1 "
                               f"(default {clustering.DEFAULT_THRESHOLD}, tuned on a "
                               "4,273-phrase harvest)"))
-    parser.add_argument("--workers", type=int, default=5, help="concurrent requests")
+    parser.add_argument("--workers", type=int, default=0,
+                        help=("concurrent requests. 0 (default) picks for you: 5 when "
+                              "asking directly, or one per proxy (capped at 120) when "
+                              "using a pool. A fixed small number is what makes a "
+                              "large pool useless — see below"))
     parser.add_argument("--rate", type=float, default=DEFAULT_RATE,
                         help=(f"sustained queries per second (default {DEFAULT_RATE}). "
                               "Google blocked an unthrottled run at ~5,000 requests; "
@@ -135,11 +139,22 @@ def main(argv: list[str] | None = None) -> int:
         progress(f"egress {egress['country']} ({egress['ip']}) — this is the harvest's "
                  "geography; autocomplete ignores gl=")
 
+    # Concurrency has to follow the pool, not sit at a constant. A pool serves one
+    # request per address at a time, so N addresses support N requests in flight;
+    # asking for 5 leaves the other N-5 idle no matter how large the pool or how
+    # generous the per-address budget. Measured: a 150-proxy pool at the old fixed
+    # 5 workers ran at 0.4 queries/second, roughly 1/500th of what it could carry.
+    workers = args.workers
+    if workers <= 0:
+        workers = min(max(len(pool), 5), 120) if pool is not None else 5
+        progress(f"concurrency: {workers} workers "
+                 f"({'one per proxy, capped' if pool is not None else 'direct'})")
+
     client = SuggestClient(
         hl=args.hl,
         ds=args.ds,
         client=args.client,
-        workers=args.workers,
+        workers=workers,
         rate=args.rate,
         pool=pool,
         cache=SuggestCache(cache_path, egress=egress.get("country") or "unknown"),
