@@ -85,18 +85,29 @@ class Phrase:
     parents: set[str] = field(default_factory=set)
     priority: float = 0.0
     cluster: int = -1
-    # Which exits surfaced this phrase, and how often. Autocomplete answers by
-    # requesting IP, so a phrase can be genuinely local to one country - and a
-    # keyword list that cannot say which is one nobody can act on per market.
-    countries: dict = field(default_factory=dict)
+    # Which markets return this phrase, and the best rank it reached in each.
+    # A market is a country deliberately ASKED FOR with `gl=`, never inferred
+    # from which exit answered: an exit tally measures the composition of the
+    # proxy pool. Measured on a 7,210-keyword harvest, the country read off the
+    # pool tracked proxy workload exactly - US held 26% of the requests and 41%
+    # of the labels - and 65% of keywords changed their top country once that
+    # bias was divided out. So this dict is empty unless a market was requested.
+    markets: dict = field(default_factory=dict)
     # How many surface forms this keyword absorbed, e.g. "quotex ai trading bot"
     # standing for the four orderings Google also returns. 1 means it was unique.
     variants: int = 1
 
     @property
-    def country(self) -> str:
-        """The exit that surfaced this phrase most often, or "" if unrecorded."""
-        return max(self.countries, key=self.countries.get) if self.countries else ""
+    def market(self) -> str:
+        """Where this phrase ranks best, or "" if no market was asked for.
+
+        Best *rank*, not most appearances: rank is what the market itself said
+        about the phrase, and is not a function of how much of the crawl that
+        market happened to receive.
+        """
+        if not self.markets:
+            return ""
+        return min(sorted(self.markets), key=lambda code: self.markets[code])
 
     @property
     def reach(self) -> int:
@@ -117,8 +128,8 @@ class Phrase:
             "level": self.first_level,
             "words": self.words,
             "variants": self.variants,
-            "country": self.country,
-            "countries": dict(sorted(self.countries.items(), key=lambda kv: -kv[1])),
+            "market": self.market,
+            "markets": dict(sorted(self.markets.items(), key=lambda kv: kv[1])),
             "cluster": self.cluster,
         }
 
@@ -130,6 +141,10 @@ class Universe:
     seed: str
     phrases: dict[str, Phrase] = field(default_factory=dict)
     off_seed: dict[str, int] = field(default_factory=dict)
+    # Which exits answered this run, as a diagnostic on the pool - never a
+    # statement about where a keyword is searched. See Phrase.markets.
+    egress_countries: dict = field(default_factory=dict)
+    market: str = ""
     levels_run: int = 0
     queries_asked: int = 0
     network_calls: int = 0
@@ -145,6 +160,59 @@ class Universe:
 
     def ranked(self) -> list[Phrase]:
         return sorted(self.phrases.values(), key=lambda p: (-p.priority, p.text))
+
+
+def merge_markets(seed: str, per_market: dict) -> Universe:
+    """One universe out of several per-market crawls, keeping who found what.
+
+    Each market is a separate crawl because the expansion re-seeds from what came
+    back: `gl=id` returns "binary option adalah", which then opens a corner of the
+    space a `gl=us` crawl never reaches. Merging afterwards is therefore the only
+    way to keep both the union of keywords and the per-market evidence - a single
+    crawl with a mixed egress gets neither.
+
+    Ranks are minimised across markets and never averaged: a keyword at rank 1 in
+    one market and absent from another is a strong keyword with a narrow market,
+    not a mediocre one.
+    """
+    merged = Universe(seed=seed)
+    merged.market = " ".join(sorted(per_market))
+    for code in sorted(per_market):
+        universe = per_market[code]
+        merged.queries_asked += universe.queries_asked
+        merged.network_calls += universe.network_calls
+        merged.cache_hits += universe.cache_hits
+        merged.errors += universe.errors
+        merged.unexpanded += universe.unexpanded
+        merged.rate_limited += universe.rate_limited
+        merged.elapsed += universe.elapsed
+        merged.levels_run = max(merged.levels_run, universe.levels_run)
+        merged.timed_out = merged.timed_out or universe.timed_out
+        merged.blocked = merged.blocked or universe.blocked
+        for entry in universe.per_level:
+            merged.per_level.append({**entry, "market": code})
+        for text, count in universe.off_seed.items():
+            merged.off_seed[text] = merged.off_seed.get(text, 0) + count
+        for origin, count in universe.egress_countries.items():
+            merged.egress_countries[origin] = (
+                merged.egress_countries.get(origin, 0) + count)
+        for text, phrase in universe.phrases.items():
+            held = merged.phrases.get(text)
+            if held is None:
+                phrase.markets = {code: phrase.best_rank}
+                merged.phrases[text] = phrase
+                continue
+            held.best_rank = min(held.best_rank, phrase.best_rank)
+            held.max_relevance = max(held.max_relevance, phrase.max_relevance)
+            held.first_level = min(held.first_level, phrase.first_level)
+            held.parents |= phrase.parents
+            held.markets[code] = min(phrase.best_rank,
+                                     held.markets.get(code, phrase.best_rank))
+    # Exhausted only if every market closed: one market still holding an
+    # unexpanded frontier means the universe is not closed.
+    merged.exhausted = bool(per_market) and all(
+        u.exhausted for u in per_market.values())
+    return merged
 
 
 def crawl(
@@ -217,14 +285,14 @@ def crawl(
                     phrase.best_rank = min(phrase.best_rank, suggestion.rank)
                     phrase.max_relevance = max(phrase.max_relevance, suggestion.relevance)
                 phrase.parents.add(response.query)
-                # Normalised on the way IN, not only where it is stored: the
-                # published lists say "United States" and the geolocation service
-                # says "US", and a cache written before this fix still holds the
-                # older mixed forms. Converting here means data already collected
-                # comes out consistent instead of needing to be gathered again.
-                origin = normalize_country(response.country)
-                if origin:
-                    phrase.countries[origin] = phrase.countries.get(origin, 0) + 1
+            # Which exits answered, counted for the run and not for the keyword.
+            # It is worth knowing that a harvest left from thirty countries; it
+            # is not worth writing next to a keyword, where it reads as the
+            # market that keyword belongs to and is nothing of the kind.
+            origin = normalize_country(response.country)
+            if origin:
+                universe.egress_countries[origin] = (
+                    universe.egress_countries.get(origin, 0) + 1)
         if client.blocked:
             # Google has started refusing us. Everything already collected is
             # kept and written out; continuing would only convert budget into

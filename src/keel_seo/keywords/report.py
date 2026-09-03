@@ -5,10 +5,12 @@ Markdown is what a person reads to decide what to build. XLSX is the one people
 actually work in — sheets for the keywords, the clusters, the provenance and the
 contamination check, with filters already set up.
 
-All of them carry the run's metadata, and the metadata always names the egress
-country rather than a requested one, because that is the only geography an
-autocomplete harvest actually has. The volume caveat travels inside every format
-too: a file outlives the terminal that produced it.
+All of them carry the run's metadata, and the metadata names the markets the run
+asked for - never the countries its requests happened to leave from. Those two
+were confused once, and the result was a 7,210-keyword file whose country column
+reproduced the proxy pool's composition instead of anyone's demand. The volume
+caveat travels inside every format too: a file outlives the terminal that
+produced it.
 """
 from __future__ import annotations
 
@@ -40,6 +42,9 @@ def metadata(universe: Universe, clusters: list[Cluster], egress: dict,
         "source": "google-autocomplete",
         "endpoint_client": client.client,
         "language": client.hl,
+        # The markets deliberately asked for, which is the only thing that makes
+        # a per-keyword market claim meaningful. Empty means none was asked.
+        "markets": universe.market,
         "vertical": client.ds or "web",
         "egress_ip": egress.get("ip", ""),
         "egress_country": egress.get("country", "unknown"),
@@ -91,13 +96,14 @@ def write_csv(path: str, clusters: list[Cluster]) -> None:
     with open(path, "w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(
-            ["priority", "keyword", "country", "cluster", "cluster_label", "intent",
+            ["priority", "keyword", "market", "markets", "cluster", "cluster_label", "intent",
              "best_rank", "reach", "relevance", "level", "words", "variants"]
         )
         for cluster in clusters:
             for phrase in cluster.members:
                 writer.writerow(
-                    [round(phrase.priority, 1), phrase.text, phrase.country,
+                    [round(phrase.priority, 1), phrase.text, phrase.market,
+                     " ".join(sorted(phrase.markets)),
                      cluster.index, cluster.label, cluster.intent, phrase.best_rank,
                      phrase.reach, phrase.max_relevance, phrase.first_level,
                      phrase.words, phrase.variants]
@@ -110,20 +116,25 @@ def write_markdown(path: str, universe: Universe, clusters: list[Cluster],
     add = lines.append
     add(f"# Keyword universe — `{universe.seed}`")
     add("")
-    if meta.get("egress_country") == "mixed":
-        add(f"**Source:** Google autocomplete only ({meta['endpoint_client']} client, "
-            f"`hl={meta['language']}`, {meta['vertical']} vertical). "
-            f"**Egress: mixed** — {meta['egress_org']}. Autocomplete answers by "
-            "requesting IP, so a rotating pool produces a deliberately "
-            "multi-country harvest. Read this as *what the term is asked, broadly* "
-            "rather than as one market's demand: some phrases below will be local "
-            "to a single country, and the exact mix is not reproducible.")
+    asked = meta.get("markets") or ""
+    add(f"**Source:** Google autocomplete only ({meta['endpoint_client']} client, "
+        f"`hl={meta['language']}`, {meta['vertical']} vertical).")
+    if asked:
+        add("")
+        how = ("The requests left through a rotating proxy pool, which is how the "
+               "volume was afforded and has no bearing on the answer."
+               if meta.get("egress_country") == "mixed"
+               else f"The requests left directly from {meta.get('egress_country', '')}, "
+                    "which the market parameter overrides.")
+        add(f"**Markets asked:** {asked.replace(' ', ', ')}. Each market was asked "
+            "for by name with `gl=`, so the Market and Markets columns say where a "
+            f"keyword is actually searched. {how}")
     else:
-        add(f"**Source:** Google autocomplete only ({meta['endpoint_client']} client, "
-            f"`hl={meta['language']}`, {meta['vertical']} vertical). "
-            f"**Egress:** {meta['egress_country']} ({meta['egress_ip']}) — autocomplete "
-            "geography is the requesting IP, never a parameter, so this is the market "
-            "the harvest actually reflects.")
+        add("")
+        add("**No market was asked for**, so nothing in this file names one. "
+            "Autocomplete answered by whichever address the request left from, "
+            "and the mix of addresses is not the same thing as a mix of markets. "
+            "Re-run with `--markets us,in,br` to get a per-market answer.")
     add("")
     add(f"**Harvested:** {meta['harvested_at']} · "
         f"**{meta.get('keywords', meta['phrases']):,} keywords** in "
@@ -221,10 +232,14 @@ COLUMN_MEANINGS = (
     ("Level", "Which round found it. 0 came straight from the seed; higher numbers "
               "are deeper in the tail."),
     ("Best rank", "Its best position in Google's suggestion list. 1 is the top."),
-    ("Country", "Which country's IP surfaced this phrase most often. Google "
-                "answers autocomplete by the requesting IP, so a phrase can be "
-                "genuinely local to one market. Blank means it came from cache "
-                "collected before countries were recorded."),
+    ("Market", "Of the markets this harvest asked, the one where the keyword "
+               "ranks highest. A market is a country the run deliberately asked "
+               "as, so this says where the keyword is strongest - not where the "
+               "request happened to come from. Blank means the run asked no "
+               "market, in which case nothing here can name one."),
+    ("Markets", "Every market whose autocomplete returned this keyword. One code "
+                "means it is local to that market; several mean the demand is "
+                "shared. This is the column to read for 'who searches this'."),
     ("Variants", "How many ways the same keyword was typed, merged into this one "
                  "row. 1 means it was only seen one way."),
     ("Non-English", "Keywords that are not in English, on their own sheet with the "
@@ -286,19 +301,20 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
     clusters_sheet = book.create_sheet("Clusters")
     keywords = book.create_sheet("Keywords")
 
-    keywords.append(["Priority", "Keyword", "Country", "Cluster", "Cluster label",
-                     "Intent", "Best rank", "Reach", "Relevance", "Level", "Words",
-                     "Variants"])
+    keywords.append(["Priority", "Keyword", "Market", "Markets", "Cluster",
+                     "Cluster label", "Intent", "Best rank", "Reach", "Relevance",
+                     "Level", "Words", "Variants"])
     # Remember where each cluster starts so the Clusters sheet can link to it.
     first_row: dict[int, int] = {}
     for cluster in clusters:
         first_row[cluster.index] = keywords.max_row + 1
         for phrase in cluster.members:
-            keywords.append([round(phrase.priority, 1), phrase.text, phrase.country,
+            keywords.append([round(phrase.priority, 1), phrase.text, phrase.market,
+                             " ".join(sorted(phrase.markets)),
                              cluster.index, cluster.label, cluster.intent,
                              phrase.best_rank, phrase.reach, phrase.max_relevance,
                              phrase.first_level, phrase.words, phrase.variants])
-    style_header(keywords, [9, 52, 9, 9, 30, 15, 11, 8, 11, 8, 8, 9])
+    style_header(keywords, [9, 52, 8, 14, 9, 30, 15, 11, 8, 11, 8, 8, 9])
     keywords.freeze_panes = "A2"
     keywords.auto_filter.ref = keywords.dimensions
 
@@ -330,9 +346,10 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
                 else "stopped at the time limit" if meta.get("stopped_by_time_limit")
                 else "stopped by a rate limit" if meta.get("stopped_by_rate_limit")
                 else "stopped at the level or query limit")
-    geography = (f"mixed across a rotating proxy pool"
-                 if meta.get("egress_country") == "mixed"
-                 else f"{meta.get('egress_country', '')} (the exit IP decides it)")
+    asked_markets = meta.get("markets") or ""
+    geography = (f"{asked_markets.replace(' ', ', ')} — asked for by name with gl="
+                 if asked_markets
+                 else "none asked for; no column in this file names a market")
 
     run.append(["Keyword universe", meta.get("seed", "")])
     run["A1"].font = title_font
@@ -381,10 +398,10 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
                if non_english_reason(p.text)]
     if foreign:
         sheet = book.create_sheet("Non-English")
-        sheet.append(["Priority", "Keyword", "Country", "Why", "Cluster label",
+        sheet.append(["Priority", "Keyword", "Market", "Why", "Cluster label",
                       "Intent", "Reach"])
         for phrase, cluster, reason in sorted(foreign, key=lambda f: -f[0].priority):
-            sheet.append([round(phrase.priority, 1), phrase.text, phrase.country,
+            sheet.append([round(phrase.priority, 1), phrase.text, phrase.market,
                           reason, cluster.label, cluster.intent, phrase.reach])
         style_header(sheet, [9, 52, 9, 30, 26, 15, 8])
         sheet.freeze_panes = "A2"
@@ -404,10 +421,26 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
     return True
 
 
+def slugify(seed: str) -> str:
+    """The filename stem a seed's outputs are written under.
+
+    Shared with the harvest walker, which decides whether a seed is already done
+    by looking for these files. Two implementations of one filename is how a
+    walker ends up re-harvesting everything it has already paid for.
+
+    Runs of punctuation collapse to one hyphen: "gold & silver" was writing
+    ``gold---silver``, which is a filename nobody would type on purpose.
+    """
+    stem = "".join(c if c.isalnum() else "-" for c in seed.lower())
+    while "--" in stem:
+        stem = stem.replace("--", "-")
+    return stem.strip("-")
+
+
 def write_all(outdir: str, universe: Universe, clusters: list[Cluster],
               meta: dict) -> dict[str, str]:
     os.makedirs(outdir, exist_ok=True)
-    stem = "".join(c if c.isalnum() else "-" for c in universe.seed.lower()).strip("-")
+    stem = slugify(universe.seed)
     paths = {
         "json": os.path.join(outdir, f"{stem}.json"),
         "csv": os.path.join(outdir, f"{stem}.csv"),

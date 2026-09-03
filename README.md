@@ -506,6 +506,7 @@ One source only: Google's autocomplete endpoint, keyless and free.
 
 ```bash
 python -m keel_seo.keywords quotex --out ./keywords
+python -m keel_seo.keywords quotex --markets us,in,br      # one crawl per market
 python -m keel_seo.keywords "pip value calculator" --levels 2 --rate 5
 ```
 
@@ -641,13 +642,28 @@ ordering, how many independent expansions surfaced a phrase, its relevance score
 its depth — and every output file says so in its own header. Do not present it as
 a volume estimate.
 
-**Its geography is the egress IP.** `gl=` does nothing: `gl=us`, `gl=in` and
-`gl=br` return byte-identical results, while the same query from two different
-egress IPs does not. Every run therefore probes its own egress and stamps the
-country it actually left from into the output, rather than one the caller asked
-for, and the cache is namespaced by it so two markets can never be blended into
-one harvest that claims to be a single one. To harvest a specific market, route
-the run through an exit in it.
+**Its geography is asked for, not inferred.** `--markets us,in,br` runs one crawl
+per market, asking Google as that market with `gl=`, and merges the results with
+per-market evidence on every keyword: `Market` is where it ranks best, `Markets`
+lists every market that returned it. The default is `us`.
+
+This corrects a claim that stood in this README for two days — that `gl=` was
+inert and returned byte-identical results. Re-measured on 2026-09-03 across four
+markets on both `suggestqueries.google.com` and `www.google.com/complete/search`,
+it is emphatically not: `gl=id` returns *binary option adalah* and *binary option
+terbaik*, `gl=in` returns *binary options trading legal in india*, and `gl=us`
+returns *binary options cboe*. Believing otherwise is what produced a
+7,210-keyword file whose country column was read off whichever proxy answered —
+a column that reproduced the pool's composition (US held 26% of the requests and
+41% of the labels) and changed its answer for 65% of keywords once that bias was
+divided out. There is now no such column: an exit-country tally is kept on the
+run, as a diagnostic on the pool, and never beside a keyword.
+
+Cost scales with the number of markets, since each is a separate crawl — which is
+also what makes it work, because `gl=id` re-seeds from Indonesian phrases and
+reaches a corner of the space a `gl=us` crawl never sees. The cache keys on the
+market, so markets never read each other's answers and any one of them re-runs
+for free.
 
 ### Rate limits
 
@@ -702,14 +718,44 @@ to the pool and then fail every real request. The import is soft — a host that
 only wants the Landing registry does not install a crawler, and `--proxies` says
 what to install rather than failing obscurely.
 
-Two consequences for the output. **The harvest is multi-country by construction**,
-and the report says so instead of naming a country: autocomplete answers by IP,
-so a rotating pool returns some phrases local to whichever exit surfaced them,
-and the exact mix is not reproducible. Read a pooled harvest as *what the term is
-asked, broadly*; use a direct run, or an egress pinned to one country, when a
-single market is the question. And a 403 through the pool is not a rate limit but
-one spent address — evicted immediately, no backoff — so the circuit breaker
-trips only when the pool empties.
+Two consequences for the output. **The pool buys request volume, not geography.**
+Which market the answers describe comes from `--markets`, so a pooled run and a
+direct run of the same market are the same harvest — the pool only decides how
+fast it can be afforded. And a 403 through the pool is not a rate limit but one
+spent address — evicted immediately, no backoff — so the circuit breaker trips
+only when the pool empties.
+
+**One spender at a time per machine.** A pooled run takes keel-crawler's
+host-wide `harvest_lock()` before it builds a pool and holds it to the end. The
+per-address budgets are enforced in memory, so two harvests side by side each
+charge every address twice its limit and earn the block the budgets exist to
+prevent — a real hazard once several projects share one host and one store. A
+second run waits rather than colliding.
+
+### Harvesting a list of seeds, and fetching the results
+
+The service layer ships with the package, so no project reproduces it:
+
+```bash
+# on the host that has an unblocked IP
+python -m keel_seo.keywords.harvest --seeds seeds.txt --out ./out --markets us,in
+# on the machine that wants the spreadsheets
+python -m keel_seo.keywords.sync --host root@1.2.3.4 --key ~/.ssh/id \
+    --remote /root/keyword-harvest/out --local docs/seo/keywords
+```
+
+`harvest` walks the list, gives each seed its own graceful deadline (never an
+external `timeout`, which lands between levels and writes nothing), and **skips
+any seed whose output is already on disk** — so a list that is nine-tenths done
+costs nine-tenths of nothing. `--refresh` re-harvests anyway.
+
+**It is deliberately not scheduled.** A seed's keyword universe is a property of
+the language, not of the day; it was briefly on a weekly timer, which would have
+re-paid for unchanged universes every Sunday and, because the cache makes a
+re-run nearly free, would not even have found anything new. Run it when a seed is
+wanted. `sync` is a pull because the harvest host cannot reach a laptop behind
+NAT, and it copies only the four output formats — never the response cache, which
+is large and only useful where the crawl runs.
 
 ## Status
 

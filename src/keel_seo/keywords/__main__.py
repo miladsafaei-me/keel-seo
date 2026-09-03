@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import sys
 
 from . import cluster as clustering
-from .crawl import crawl
+from .crawl import crawl, merge_markets
 from .report import metadata, write_all
 from .proxying import (AVAILABLE as PROXIES_AVAILABLE, MISSING_MESSAGE,
                        PER_PROXY_PER_HOUR, PER_PROXY_PER_MINUTE, PER_PROXY_RPS,
-                       ProxyPool, accept_suggestions)
+                       ProxyPool, accept_suggestions, harvest_lock)
 from .suggest import DEFAULT_RATE, SuggestCache, SuggestClient, egress_identity
 
 # Requests in flight when a proxy pool is in use. Higher than any pool is likely
@@ -59,6 +60,16 @@ def build_parser() -> argparse.ArgumentParser:
                         help=(f"sustained queries per second (default {DEFAULT_RATE}). "
                               "Google blocked an unthrottled run at ~5,000 requests; "
                               "0 disables the throttle"))
+    parser.add_argument("--markets", default="us",
+                        help=("comma-separated ISO-3166 alpha-2 markets to ask, "
+                              "e.g. 'us,in,br' (default 'us'). Each market is a "
+                              "separate crawl asked with gl=, and the outputs are "
+                              "merged with per-market evidence per keyword - which "
+                              "is the only honest way to say where a keyword is "
+                              "searched. Cost scales with the number of markets. "
+                              "Pass '' to ask no market at all, in which case "
+                              "whichever address answers decides the results and "
+                              "nothing in the output can name a market"))
     parser.add_argument("--hl", default="en", help="interface language (default en)")
     parser.add_argument("--ds", default="",
                         help="vertical: yt, sh, nws, bks. Default is web search")
@@ -84,14 +95,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--proxy-candidates", type=int, default=900,
                         help=("how many candidates to validate to find them "
                               "(default 900; the measured hit rate is ~6%%)"))
+    # The defaults are keel-crawler's, imported and never restated here. Where
+    # the extra is not installed they are None and the help text says so rather
+    # than printing a number this package would then own a stale copy of.
+    owned = "keel-crawler's measured default" if PER_PROXY_RPS else "needs keel-seo[proxies]"
     parser.add_argument("--proxy-rps", type=float, default=PER_PROXY_RPS,
-                        help=(f"requests per second allowed to EACH proxy "
-                              f"(default {PER_PROXY_RPS}, i.e. one per "
-                              f"{1 / PER_PROXY_RPS:.0f}s)"))
+                        help=f"requests per second allowed to EACH proxy ({owned})")
     parser.add_argument("--proxy-per-minute", type=int, default=PER_PROXY_PER_MINUTE,
-                        help=f"per-proxy requests per minute (default {PER_PROXY_PER_MINUTE})")
+                        help=f"per-proxy requests per minute ({owned})")
     parser.add_argument("--proxy-per-hour", type=int, default=PER_PROXY_PER_HOUR,
-                        help=f"per-proxy requests per hour (default {PER_PROXY_PER_HOUR})")
+                        help=f"per-proxy requests per hour ({owned})")
     parser.add_argument("--max-seconds", type=float, default=0,
                         help=("stop gracefully after this many seconds and still "
                               "write everything found (0 = no deadline). Always "
@@ -110,6 +123,22 @@ def main(argv: list[str] | None = None) -> int:
 
     cache_path = args.cache or os.path.join(args.out, ".suggest-cache.jsonl")
     os.makedirs(args.out, exist_ok=True)
+
+    with contextlib.ExitStack() as stack:
+        if args.proxies != "off" and harvest_lock is not None:
+            # One spender at a time per machine. The per-address budgets that
+            # keep the pool alive are enforced in memory, so a second harvest
+            # running beside this one charges every address twice its limit and
+            # earns the block the budgets exist to prevent. The mutex is keyed on
+            # the shared store, so another project's harvest waits here too.
+            progress("waiting for the host's proxy-harvest lock ...")
+            stack.enter_context(harvest_lock())
+            progress("holding the host's proxy-harvest lock")
+        return _run(args, progress, cache_path)
+
+
+def _run(args, progress, cache_path: str) -> int:
+    """The harvest itself, once this machine's proxy spend is ours to make."""
 
     # The egress is resolved before the client is built, because it is part of
     # the cache key: a harvest must never inherit answers collected from another
@@ -134,16 +163,16 @@ def main(argv: list[str] | None = None) -> int:
             print("no proxy answered the endpoint; refusing to start a crawl that "
                   "would have no egress", file=sys.stderr)
             return 1
-        # A rotating pool leaves from many countries at once, so this harvest has
-        # no single geography and must not claim one.
+        # A rotating pool leaves from many countries at once. That is how the
+        # request volume is afforded, and - now that the market is asked for by
+        # name - it has no bearing on which market the answers describe.
         egress = {"ip": "", "country": "mixed",
                   "org": f"rotating pool of {len(pool)} proxies"}
-        progress(f"egress mixed across {len(pool)} proxies — this harvest is "
-                 "deliberately multi-country")
+        progress(f"egress mixed across {len(pool)} proxies — volume only; the "
+                 "market comes from --markets")
     else:
         egress = egress_identity()
-        progress(f"egress {egress['country']} ({egress['ip']}) — this is the harvest's "
-                 "geography; autocomplete ignores gl=")
+        progress(f"egress {egress['country']} ({egress['ip']})")
 
     # Concurrency has to match what the pool can carry. A pool serves one request
     # per address at a time, so N addresses support N requests in flight; a fixed
@@ -162,35 +191,68 @@ def main(argv: list[str] | None = None) -> int:
         progress(f"concurrency: {workers} workers "
                  f"({'pooled' if pool is not None else 'direct'})")
 
-    client = SuggestClient(
-        hl=args.hl,
-        ds=args.ds,
-        client=args.client,
-        workers=workers,
-        rate=args.rate,
-        pool=pool,
-        cache=SuggestCache(cache_path, egress=egress.get("country") or "unknown"),
-    )
+    markets = [code.strip().upper() for code in args.markets.split(",")
+               if code.strip()]
+    for code in markets:
+        if len(code) != 2 or not code.isalpha():
+            print(f"--markets takes ISO-3166 alpha-2 codes; {code!r} is not one",
+                  file=sys.stderr)
+            return 1
+    # One shared cache across the markets: its key already carries the market, so
+    # the markets cannot read each other's answers, and a re-run of any of them
+    # still replays for free.
+    cache = SuggestCache(cache_path, egress=egress.get("country") or "unknown")
 
-    universe = crawl(
-        args.seed,
-        client,
-        levels=args.levels,
-        budget=args.budget,
-        saturate=args.saturate,
-        frontier_cap=args.frontier,
-        tight=not args.no_tight,
-        wildcards=args.wildcards,
-        max_seconds=args.max_seconds,
-        progress=progress,
-    )
+    def build_client(market: str) -> SuggestClient:
+        return SuggestClient(
+            hl=args.hl,
+            gl=market,
+            ds=args.ds,
+            client=args.client,
+            workers=workers,
+            rate=args.rate,
+            pool=pool,
+            cache=cache,
+        )
+
+    # The deadline is per market, not for the walk: a run given six hours and
+    # three markets is asking for six hours of each, and a shared deadline would
+    # silently starve the last one.
+    per_market: dict = {}
+    for code in (markets or [""]):
+        if code:
+            progress(f"market {code}: asking Google as gl={code.lower()}")
+        client = build_client(code)
+        per_market[code] = crawl(
+            args.seed,
+            client,
+            levels=args.levels,
+            budget=args.budget,
+            saturate=args.saturate,
+            frontier_cap=args.frontier,
+            tight=not args.no_tight,
+            wildcards=args.wildcards,
+            max_seconds=args.max_seconds,
+            progress=progress,
+        )
+        if code:
+            progress(f"market {code}: {len(per_market[code].phrases):,} phrases")
+
+    universe = merge_markets(args.seed, {c: u for c, u in per_market.items() if c})
+    if not markets:
+        universe = per_market[""]
+    elif len(markets) > 1:
+        progress(f"merged {len(markets)} markets -> {len(universe.phrases):,} phrases")
     if not universe.phrases:
         print(f"no phrases containing {args.seed!r} were returned", file=sys.stderr)
         return 1
 
     progress(f"clustering {len(universe.phrases)} phrases ...")
     clusters = clustering.build(universe, topics=args.topics)
-    meta = metadata(universe, clusters, egress, client)
+    # metadata reads the endpoint settings off a client; every market's client
+    # shares them, so the last one is as good as any - name it rather than
+    # relying on the loop variable surviving.
+    meta = metadata(universe, clusters, egress, build_client(markets[0] if markets else ""))
     paths = write_all(args.out, universe, clusters, meta)
 
     progress(

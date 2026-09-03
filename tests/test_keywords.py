@@ -8,11 +8,15 @@ Run: DJANGO_SETTINGS_MODULE=tests.settings python -m django test tests.test_keyw
      python -m unittest tests.test_keywords
 """
 import os
+import tempfile
 import unittest
+from pathlib import Path
 
 from keel_seo.keywords import cluster as clustering
+from keel_seo.keywords import harvest, report, sync
 from keel_seo.keywords import language
-from keel_seo.keywords.crawl import Universe, contains_seed, crawl, score, seed_tokens
+from keel_seo.keywords.crawl import (Phrase, Universe, contains_seed, crawl,
+                                     merge_markets, score, seed_tokens)
 from keel_seo.keywords.grammar import (BRANCH, DRILL, SEED, expansions,
                                        star_variants)
 from keel_seo.keywords.proxying import accept_suggestions
@@ -638,6 +642,157 @@ class IntentTests(unittest.TestCase):
 
     def test_an_unmarked_phrase_is_brand_not_navigational(self):
         self.assertEqual(self.classify("quotex signal bot"), clustering.BRAND)
+
+
+class AskingForAMarket(unittest.TestCase):
+    """`gl=` is a real dimension, and the only honest source of a market."""
+
+    def test_the_market_reaches_the_query_string(self):
+        client = SuggestClient(gl="ID")
+        self.assertIn("gl=id", client.endpoint_url("binary option"))
+
+    def test_no_market_asked_means_no_gl_sent(self):
+        self.assertNotIn("gl=", SuggestClient().endpoint_url("x"))
+
+    def test_a_market_is_part_of_the_cache_identity(self):
+        cache = SuggestCache(None, egress="TR")
+        plain = cache.key("chrome", "en", "", "q")
+        self.assertNotEqual(plain, cache.key("chrome", "en", "", "q", "us"))
+        self.assertNotEqual(cache.key("chrome", "en", "", "q", "us"),
+                            cache.key("chrome", "en", "", "q", "id"))
+
+    def test_responses_collected_before_markets_existed_still_replay(self):
+        """The key must not change shape when no market is asked for."""
+        cache = SuggestCache(None, egress="TR")
+        self.assertEqual(cache.key("chrome", "en", "", "q"), "TR|chrome|en||q")
+        self.assertEqual(cache.key("chrome", "en", "", "q", ""), "TR|chrome|en||q")
+
+
+class MergingSeveralMarkets(unittest.TestCase):
+    def _universe(self, seed, phrases):
+        universe = Universe(seed=seed)
+        for text, rank in phrases:
+            phrase = Phrase(text, rank, 600, 0)
+            phrase.parents.add(seed)
+            universe.phrases[text] = phrase
+        universe.exhausted = True
+        return universe
+
+    def test_a_keyword_records_every_market_that_returned_it(self):
+        merged = merge_markets("binary option", {
+            "US": self._universe("binary option", [("binary options cboe", 4),
+                                                   ("binary options", 1)]),
+            "ID": self._universe("binary option", [("binary options adalah", 3),
+                                                   ("binary options", 2)]),
+        })
+        self.assertEqual(sorted(merged.phrases["binary options"].markets), ["ID", "US"])
+        self.assertEqual(list(merged.phrases["binary options cboe"].markets), ["US"])
+        self.assertEqual(list(merged.phrases["binary options adalah"].markets), ["ID"])
+
+    def test_the_market_is_where_it_ranks_best_not_where_it_appeared_most(self):
+        merged = merge_markets("x", {
+            "US": self._universe("x", [("x thing", 9)]),
+            "ID": self._universe("x", [("x thing", 2)]),
+        })
+        self.assertEqual(merged.phrases["x thing"].market, "ID")
+        self.assertEqual(merged.phrases["x thing"].best_rank, 2)
+
+    def test_the_markets_asked_are_named_on_the_run(self):
+        merged = merge_markets("x", {"US": self._universe("x", [("x a", 1)]),
+                                     "BR": self._universe("x", [("x b", 1)])})
+        self.assertEqual(merged.market, "BR US")
+
+    def test_one_market_still_holding_a_frontier_means_not_exhausted(self):
+        open_market = self._universe("x", [("x a", 1)])
+        open_market.exhausted = False
+        merged = merge_markets("x", {"US": self._universe("x", [("x b", 1)]),
+                                     "IN": open_market})
+        self.assertFalse(merged.exhausted)
+
+    def test_a_keyword_carries_no_market_when_none_was_asked(self):
+        universe = self._universe("x", [("x a", 1)])
+        self.assertEqual(universe.phrases["x a"].market, "")
+        self.assertEqual(universe.phrases["x a"].markets, {})
+
+
+class TheExitCountryIsNeverAMarket(unittest.TestCase):
+    """The defect this replaced: a country read off whichever proxy answered."""
+
+    def test_a_phrase_row_offers_a_market_and_never_an_exit_country(self):
+        phrase = Phrase("x a", 1, 600, 0)
+        phrase.markets = {"US": 1}
+        row = phrase.as_row()
+        self.assertIn("market", row)
+        self.assertIn("markets", row)
+        self.assertNotIn("country", row)
+        self.assertNotIn("countries", row)
+
+    def test_the_exit_tally_is_kept_on_the_run_where_it_cannot_mislead(self):
+        universe = Universe(seed="x")
+        self.assertEqual(universe.egress_countries, {})
+
+
+class TheProxyLimitsAreNotRestatedHere(unittest.TestCase):
+    """Two sources of truth for one limit is how 0.2/10/200 outlived itself."""
+
+    def test_this_package_holds_no_copy_of_the_numbers(self):
+        from keel_seo.keywords import proxying
+
+        if proxying.AVAILABLE:
+            from keel_crawler.proxy.pool import PER_PROXY_RPS as owner
+            self.assertEqual(proxying.PER_PROXY_RPS, owner)
+        else:
+            self.assertIsNone(proxying.PER_PROXY_RPS)
+            self.assertIsNone(proxying.PER_PROXY_PER_MINUTE)
+            self.assertIsNone(proxying.PER_PROXY_PER_HOUR)
+
+
+class TheHarvestWalker(unittest.TestCase):
+    """The service layer, which every project now shares instead of copying."""
+
+    def test_comments_and_blank_lines_are_not_seeds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "seeds.txt")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("# a comment\n\nquotex\n  pocket option  # inline\n\n")
+            self.assertEqual(harvest.read_seeds(path), ["quotex", "pocket option"])
+
+    def test_a_seed_with_output_on_disk_is_considered_done(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertFalse(harvest.already_harvested(tmp, "pocket option"))
+            for kind in ("json", "md"):
+                Path(tmp, f"pocket-option.{kind}").write_text("{}", encoding="utf-8")
+            self.assertTrue(harvest.already_harvested(tmp, "pocket option"))
+
+    def test_the_walker_looks_for_the_same_filename_the_writer_writes(self):
+        """Two spellings of one stem is how a walker re-pays for finished work."""
+        self.assertEqual(report.slugify("pocket option"), "pocket-option")
+        self.assertEqual(report.slugify("Quotex"), "quotex")
+        self.assertEqual(report.slugify("gold & silver"), "gold-silver")
+
+    def test_an_empty_seed_list_is_success_and_not_a_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "seeds.txt")
+            Path(path).write_text("# nothing but a comment\n", encoding="utf-8")
+            code = harvest.main(["--seeds", path, "--out", os.path.join(tmp, "out")])
+            self.assertEqual(code, 0)
+
+    def test_every_seed_already_done_makes_the_walk_free(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "out")
+            os.makedirs(out)
+            for kind in ("json", "md"):
+                Path(out, f"quotex.{kind}").write_text("{}", encoding="utf-8")
+            path = os.path.join(tmp, "seeds.txt")
+            Path(path).write_text("quotex\n", encoding="utf-8")
+            code = harvest.main(["--seeds", path, "--out", out])
+            self.assertEqual(code, 0)
+
+
+class TheSyncFileList(unittest.TestCase):
+    def test_the_response_cache_is_not_a_harvest_format(self):
+        self.assertNotIn("jsonl", sync.FORMATS)
+        self.assertEqual(set(sync.FORMATS), {"xlsx", "json", "csv", "md"})
 
 
 if __name__ == "__main__":

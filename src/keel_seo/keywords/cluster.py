@@ -227,12 +227,14 @@ def build(universe: Universe, *, topics: int = DEFAULT_TOPICS,
         # The strongest evidence in the group represents it: a variant surfaced by
         # more queries is the same keyword, so its reach belongs to the keyword.
         head.parents = set().union(*(m.parents for m in members))
-        # A collapsed keyword inherits every country its variants were seen from.
+        # A collapsed keyword inherits every market its variants reached, at the
+        # best rank any of them managed there. Ranks are minimised, not summed:
+        # two spellings of one keyword do not make it twice as prominent.
         merged: dict = {}
         for member in members:
-            for code, count in member.countries.items():
-                merged[code] = merged.get(code, 0) + count
-        head.countries = merged
+            for code, rank in member.markets.items():
+                merged[code] = min(rank, merged.get(code, rank))
+        head.markets = merged
         keywords.append(head)
         tokens.append(frozenset(key))
 

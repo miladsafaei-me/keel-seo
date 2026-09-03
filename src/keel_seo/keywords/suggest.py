@@ -171,8 +171,15 @@ class SuggestCache:
                         continue
                     self._rows[row["k"]] = row["v"]
 
-    def key(self, client: str, hl: str, ds: str, query: str) -> str:
-        return f"{self.egress}|{client}|{hl}|{ds}|{query}"
+    def key(self, client: str, hl: str, ds: str, query: str, gl: str = "") -> str:
+        """The full request identity, market included.
+
+        ``gl`` is appended only when one was asked for, so the millions of
+        responses collected before markets existed keep their keys and a re-run
+        still replays them instead of paying for them again.
+        """
+        base = f"{self.egress}|{client}|{hl}|{ds}|{query}"
+        return f"{base}|gl={gl.upper()}" if gl else base
 
     def get(self, key: str) -> list | None:
         value = self._rows.get(key)
@@ -201,6 +208,16 @@ class SuggestClient:
     """
 
     hl: str = "en"
+    # The market to ask as: an ISO-3166 alpha-2 code, or "" to let the exit IP
+    # decide. This is the parameter an earlier note in this file called inert.
+    # It is not: measured 2026-09-03 against both this endpoint and
+    # www.google.com/complete/search, `gl=id` returns "binary option adalah"
+    # and "binary option terbaik" where `gl=us` returns "binary options cboe",
+    # and `gl=in` returns "binary options trading legal in india". Asking for a
+    # market is therefore the only honest way to say which market a keyword
+    # belongs to - the alternative, reading it off which proxy happened to
+    # answer, measures the pool and not the demand.
+    gl: str = ""
     ds: str = ""
     client: str = "chrome"
     workers: int = 5
@@ -239,6 +256,8 @@ class SuggestClient:
 
     def endpoint_url(self, query: str) -> str:
         params = {"client": self.client, "hl": self.hl, "q": query}
+        if self.gl:
+            params["gl"] = self.gl.lower()
         if self.ds:
             params["ds"] = self.ds
         return f"{ENDPOINT}?{urllib.parse.urlencode(params)}"
@@ -311,7 +330,7 @@ class SuggestClient:
         return None
 
     def fetch(self, query: str) -> Response:
-        key = self.cache.key(self.client, self.hl, self.ds, query)
+        key = self.cache.key(self.client, self.hl, self.ds, query, self.gl)
         payload = self.cache.get(key)
         country = ""
         if payload is None:
@@ -378,11 +397,14 @@ class SuggestClient:
 def egress_identity(timeout: float = 8.0) -> dict:
     """Report the IP the crawl actually left from, and the country it maps to.
 
-    Autocomplete's geography is decided by the requesting IP, never by a ``gl=``
-    parameter - asking ``gl=us``, ``gl=in`` and ``gl=br`` returns byte-identical
-    results, while the same query from two different egress IPs does not. A
-    harvest is therefore only labelable by where it egressed, so every run
-    stamps this into its output instead of a country the caller asked for.
+    Two things decide what autocomplete returns: the requesting IP, and the
+    ``gl=`` parameter. A 2026-09-01 note here claimed the second was inert and
+    returned byte-identical results; re-measured on 2026-09-03 against four
+    markets on both endpoints, that is simply wrong, and believing it is what
+    made an earlier harvest label keywords by whichever proxy answered. Ask for
+    a market with ``gl`` and the market is a deliberate dimension of the run;
+    this function reports the other half, so a run without ``gl`` can still say
+    where it egressed instead of implying a market it never chose.
     """
     try:
         request = urllib.request.Request(
