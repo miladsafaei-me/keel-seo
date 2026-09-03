@@ -80,14 +80,15 @@ def write_csv(path: str, clusters: list[Cluster]) -> None:
         writer = csv.writer(handle)
         writer.writerow(
             ["priority", "keyword", "cluster", "cluster_label", "intent",
-             "best_rank", "reach", "relevance", "level", "words"]
+             "best_rank", "reach", "relevance", "level", "words", "variants"]
         )
         for cluster in clusters:
             for phrase in cluster.members:
                 writer.writerow(
                     [round(phrase.priority, 1), phrase.text, cluster.index,
                      cluster.label, cluster.intent, phrase.best_rank, phrase.reach,
-                     phrase.max_relevance, phrase.first_level, phrase.words]
+                     phrase.max_relevance, phrase.first_level, phrase.words,
+                     phrase.variants]
                 )
 
 
@@ -214,6 +215,10 @@ COLUMN_MEANINGS = (
                   "Google orders roughly by popularity, but on its own this is the "
                   "weakest predictor here (+0.15), which is why it carries only "
                   "10% of Priority."),
+    ("Variants", "How many ways the same keyword was typed. \"quotex ai trading "
+                 "bot\", \"ai quotex trading bot\" and \"quotex trading bot ai\" are "
+                 "one keyword asked three ways; the highest-priority form is kept "
+                 "and the rest counted here. 1 means it was unique."),
     ("Intent", "What the searcher wants, decided from the words alone: "
                "navigational (reach a thing), informational (know something), "
                "commercial (compare before buying), transactional (act now), or "
@@ -270,7 +275,7 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
     keywords = book.create_sheet("Keywords")
 
     keywords.append(["Priority", "Keyword", "Cluster", "Cluster label", "Intent",
-                     "Best rank", "Reach", "Relevance", "Level", "Words"])
+                     "Best rank", "Reach", "Relevance", "Level", "Words", "Variants"])
     # Remember where each cluster starts so the Clusters sheet can link to it.
     first_row: dict[int, int] = {}
     for cluster in clusters:
@@ -279,8 +284,8 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
             keywords.append([round(phrase.priority, 1), phrase.text, cluster.index,
                              cluster.label, cluster.intent, phrase.best_rank,
                              phrase.reach, phrase.max_relevance, phrase.first_level,
-                             phrase.words])
-    style_header(keywords, [9, 52, 9, 30, 15, 11, 8, 11, 8, 8])
+                             phrase.words, phrase.variants])
+    style_header(keywords, [9, 52, 9, 30, 15, 11, 8, 11, 8, 8, 9])
     keywords.freeze_panes = "A2"
     keywords.auto_filter.ref = keywords.dimensions
 

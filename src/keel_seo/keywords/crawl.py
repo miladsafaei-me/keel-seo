@@ -84,6 +84,9 @@ class Phrase:
     parents: set[str] = field(default_factory=set)
     priority: float = 0.0
     cluster: int = -1
+    # How many surface forms this keyword absorbed, e.g. "quotex ai trading bot"
+    # standing for the four orderings Google also returns. 1 means it was unique.
+    variants: int = 1
 
     @property
     def reach(self) -> int:
@@ -103,6 +106,7 @@ class Phrase:
             "relevance": self.max_relevance,
             "level": self.first_level,
             "words": self.words,
+            "variants": self.variants,
             "cluster": self.cluster,
         }
 

@@ -579,17 +579,35 @@ worth seeing, and the report has a section for it.
 
 ### Clustering
 
-Phrases are grouped by how much wording they genuinely share. The seed's own
-tokens are removed first, since every phrase has them and they say nothing about
-which phrases belong together. Shared words are then weighted by rarity, because
-two phrases sharing `app` share almost nothing while two sharing `zigzag` are
-about the same thing. Clusters grow by average linkage, which is what stops a
-long tail chaining into one blob.
+Three steps, all deterministic and model-free.
 
-Each cluster is labelled by the rare words most of its members agree on and
-tagged with a deterministic intent — `navigational`, `informational`,
-`commercial`, `transactional`, or `brand` for the seed plus a bare noun. No model
-is involved anywhere in this package.
+**Collapse the ways one keyword gets typed.** `quotex ai trading bot`, `ai quotex
+trading bot` and `quotex trading bot ai` are one keyword asked three ways, and
+Google returns all of them; simple plurals fold too, so `signal` and `signals` do
+not become two topics. On a 9,499-phrase harvest this collapsed 2,260 redundant
+phrases, each of which had been diluting its own cluster.
+
+**Name the topics.** The words worth a page are the ones carrying the most
+demand, so candidate anchors are ranked by the total priority of the keywords
+containing them, and the top `topics` (default 200) that name at least three
+keywords become the topic set.
+
+**Assign by the most specific anchor a keyword contains.** A phrase holding both
+`app` and `zigzag` belongs under `zigzag` — the rarer word says what it is about.
+A keyword containing no anchor is *not* forced anywhere: it goes to an explicitly
+named `long tail` group, which always sorts last.
+
+This replaced bottom-up agglomerative clustering with a similarity threshold,
+which on that same harvest produced **1,796 clusters, 47% of them a single
+phrase, median size 2** — a list wearing a cluster's name — and took eight
+minutes. The same corpus now becomes **201 topics, median 28, one singleton, in
+0.1 seconds**, with labels like `demo`, `withdrawal`, `legal`, `apk` and
+`strategy`. Each cluster also carries a deterministic intent: `navigational`,
+`informational`, `commercial`, `transactional`, or `brand`.
+
+Forcing the tail into the nearest topic was tried and rejected: it placed one
+extra keyword out of 7,476 while filing `quotex erfahrungen` under "trading" and
+`quotex iran` under "com". An honest residue beats a tidy lie.
 
 ### What the priority score is worth, measured
 

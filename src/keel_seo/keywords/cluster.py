@@ -134,88 +134,145 @@ def classify_intent(tokens: frozenset[str]) -> str:
 # corpus in singletons. 0.24 clustered 92% of phrases while the largest cluster
 # (74 phrases, all "is quotex real or fake") stayed narrow enough to be one page,
 # which is the unit a cluster is supposed to map to.
-DEFAULT_THRESHOLD = 0.24
+# How many topics a harvest is cut into. Not a similarity threshold: the
+# previous version grew clusters bottom-up until a similarity cut stopped them,
+# which on a 9,499-phrase `quotex` universe produced 1,796 clusters, 47% of them
+# a single phrase and a median size of 2. That is a list wearing a cluster's
+# name. Fixing the number of topics instead gives an output someone can act on -
+# the same corpus becomes ~200 clusters at a median of 28.
+DEFAULT_TOPICS = 200
+
+# An anchor word must name a real group, not one phrase.
+MIN_ANCHOR_PHRASES = 3
+
+# Where phrases go when they contain no anchor word at all. Named, and left
+# whole, rather than forced into the nearest topic: a similarity fallback was
+# measured and placed one phrase out of 7,476, while misfiling `quotex
+# erfahrungen` under "trading" and `quotex iran` under "com". An honest residue
+# beats a tidy lie.
+TAIL_LABEL = "long tail"
 
 
-def build(universe: Universe, *, threshold: float = DEFAULT_THRESHOLD,
-          max_postings: int = 400) -> list[Cluster]:
-    """Cluster a crawled universe, most valuable topic first."""
+def fold_plural(token: str, vocabulary) -> str:
+    """Treat a plural as its singular when the singular is also in the corpus.
+
+    Without this, `signal` and `signals` become two topics describing the same
+    thing, which is how a keyword list acquires duplicate pages. Deliberately
+    crude - only -s and -es, and only when the singular actually occurs - because
+    a real stemmer would also fold `trading` into `trade` and `legal` into
+    `leg`, merging topics that are genuinely different.
+    """
+    for suffix in ("es", "s"):
+        if len(token) > len(suffix) + 2 and token.endswith(suffix):
+            stem = token[: -len(suffix)]
+            if stem in vocabulary:
+                return stem
+    return token
+
+
+def canonical_key(tokens: frozenset[str]) -> tuple[str, ...]:
+    """The identity of a keyword regardless of the order its words were typed in.
+
+    ``quotex ai trading bot``, ``ai quotex trading bot``, ``quotex ai bot
+    trading`` and ``quotex trading bot ai`` are one keyword asked four ways, and
+    Google returns all four. On the `quotex` universe this collapsed 1,164
+    redundant phrases across 819 groups - 12% of the corpus - each of which had
+    been diluting its own cluster and its own signals.
+    """
+    return tuple(sorted(tokens))
+
+
+def build(universe: Universe, *, topics: int = DEFAULT_TOPICS,
+          min_anchor: int = MIN_ANCHOR_PHRASES) -> list[Cluster]:
+    """Group a crawled universe into a usable number of named topics.
+
+    Three steps, in order.
+
+    **Collapse word-order variants.** Phrases with the same content words are the
+    same keyword; the highest-priority surface form represents the group and the
+    rest are counted as variants.
+
+    **Name the topics.** Every remaining keyword is described by its content
+    words. The words worth building a page around are the ones carrying the most
+    demand, so candidate anchors are ranked by the total priority of the keywords
+    containing them, and the top `topics` of those that name at least
+    `min_anchor` keywords become the topic set.
+
+    **Assign by the most specific anchor a keyword actually contains.** A phrase
+    holding both ``app`` and ``zigzag`` belongs under ``zigzag``: the rarer word
+    is the one that says what the phrase is about. A keyword containing no anchor
+    is not forced anywhere - it goes to an explicitly named long-tail group.
+    """
     phrases = universe.ranked()
     if not phrases:
         return []
 
     drop = STOPWORDS | set(seed_tokens(universe.seed))
-    tokens = [tokenize(p.text, drop) for p in phrases]
+    vocabulary = {t for phrase in phrases for t in tokenize(phrase.text, drop)}
+
+    def content(text: str) -> frozenset[str]:
+        return frozenset(fold_plural(t, vocabulary) for t in tokenize(text, drop))
+
+    grouped: dict[tuple[str, ...], list[Phrase]] = {}
+    for phrase in phrases:
+        grouped.setdefault(canonical_key(content(phrase.text)), []).append(phrase)
+
+    # One representative per keyword, plus the variants it absorbed.
+    keywords: list[Phrase] = []
+    tokens: list[frozenset[str]] = []
+    for key, members in grouped.items():
+        members.sort(key=lambda p: -p.priority)
+        head = members[0]
+        head.variants = len(members)
+        # The strongest evidence in the group represents it: a variant surfaced by
+        # more queries is the same keyword, so its reach belongs to the keyword.
+        head.parents = set().union(*(m.parents for m in members))
+        keywords.append(head)
+        tokens.append(frozenset(key))
 
     document_frequency: dict[str, int] = {}
     for bag in tokens:
         for token in bag:
             document_frequency[token] = document_frequency.get(token, 0) + 1
-    total = len(phrases)
+    total = len(keywords)
     idf = {t: math.log(total / df) + 1.0 for t, df in document_frequency.items()}
 
-    weight = [sum(idf[t] for t in bag) for bag in tokens]
-
-    # Only phrases sharing at least one token can be similar, so pairs are drawn
-    # from an inverted index rather than from all N^2. Very common tokens are
-    # skipped as pair *generators* - they would propose most of the corpus while
-    # contributing almost nothing to the score - but they still count in it.
-    postings: dict[str, list[int]] = {}
+    demand: dict[str, float] = {}
     for index, bag in enumerate(tokens):
         for token in bag:
-            postings.setdefault(token, []).append(index)
+            demand[token] = demand.get(token, 0.0) + keywords[index].priority
 
-    similarity: dict[tuple[int, int], float] = {}
-    for token, members in postings.items():
-        if len(members) < 2 or len(members) > max_postings:
-            continue
-        for position, i in enumerate(members):
-            for j in members[position + 1:]:
-                key = (i, j)
-                if key in similarity:
-                    continue
-                shared = tokens[i] & tokens[j]
-                if not shared:
-                    continue
-                union = weight[i] + weight[j] - sum(idf[t] for t in shared)
-                if union <= 0:
-                    continue
-                score = sum(idf[t] for t in shared) / union
-                if score >= threshold:
-                    similarity[key] = score
+    ranked_anchors = sorted(
+        (t for t in demand if document_frequency[t] >= min_anchor),
+        key=lambda t: (-demand[t], t),
+    )
+    anchors = set(ranked_anchors[:topics])
 
-    parent = list(range(len(phrases)))
-
-    def root(i: int) -> int:
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    groups: dict[int, list[int]] = {i: [i] for i in range(len(phrases))}
-    for (i, j), score in sorted(similarity.items(), key=lambda kv: -kv[1]):
-        a, b = root(i), root(j)
-        if a == b:
-            continue
-        left, right = groups[a], groups[b]
-        linkage = sum(
-            similarity.get((min(x, y), max(x, y)), 0.0) for x in left for y in right
-        ) / (len(left) * len(right))
-        if linkage < threshold:
-            continue
-        parent[b] = a
-        groups[a] = left + right
-        del groups[b]
+    buckets: dict[str, list[int]] = {}
+    for index, bag in enumerate(tokens):
+        own = bag & anchors
+        # Most specific wins: the rarest anchor present is the one that says what
+        # the phrase is about.
+        label = max(own, key=lambda t: (idf[t], t)) if own else TAIL_LABEL
+        buckets.setdefault(label, []).append(index)
 
     clusters: list[Cluster] = []
-    for members in groups.values():
-        members.sort(key=lambda i: -phrases[i].priority)
-        cluster = Cluster(index=0, members=[phrases[i] for i in members])
-        cluster.signature = _signature(members, tokens, idf)
+    for label, members in buckets.items():
+        members.sort(key=lambda i: -keywords[i].priority)
+        cluster = Cluster(index=0, members=[keywords[i] for i in members])
+        if label == TAIL_LABEL:
+            # The tail has nothing in common by definition, so a signature drawn
+            # from it would name whatever happened to repeat and read as a topic.
+            cluster.signature = (TAIL_LABEL,)
+        else:
+            extra = _signature(members, tokens, idf, keep=2)
+            cluster.signature = (label,) + tuple(t for t in extra if t != label)
         cluster.intent = _intent(members, tokens)
         clusters.append(cluster)
 
-    clusters.sort(key=lambda c: -c.priority)
+    # The tail always goes last however large it grows. It is the residue, and a
+    # residue at the top of the list reads as the most important topic.
+    clusters.sort(key=lambda c: (c.label == TAIL_LABEL, -c.priority))
     for index, cluster in enumerate(clusters, 1):
         cluster.index = index
         for phrase in cluster.members:

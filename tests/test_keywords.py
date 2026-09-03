@@ -421,49 +421,67 @@ class ClusterTests(unittest.TestCase):
         score(universe)
         return universe
 
-    def test_a_rare_shared_word_groups_and_a_common_one_does_not(self):
-        """The whole point of weighting overlap by rarity.
-
-        `strategy` is spread across the corpus, so sharing it means almost
-        nothing; `zigzag` and `withdrawal` are confined to one topic each, so
-        sharing one of those is what makes two phrases the same subject. Plain
-        overlap counting cannot tell those two cases apart.
-        """
-        universe = self.universe([
+    def corpus(self):
+        """A corpus with real topics: words that name a group, and words that do not."""
+        return [
             "quotex zigzag strategy", "quotex zigzag indicator", "quotex zigzag settings",
             "quotex withdrawal problem", "quotex withdrawal proof", "quotex withdrawal time",
+            "quotex demo account", "quotex demo login", "quotex demo reset",
             "quotex martingale strategy", "quotex rsi strategy", "quotex trend strategy",
-            "quotex scalping strategy", "quotex candlestick strategy",
+        ]
+
+    def test_a_keyword_lands_under_the_word_that_says_what_it_is_about(self):
+        clusters = clustering.build(self.universe(self.corpus()), min_anchor=3)
+        by_phrase = {p.text: c for c in clusters for p in c.members}
+        self.assertEqual(by_phrase["quotex zigzag strategy"].index,
+                         by_phrase["quotex zigzag indicator"].index)
+        self.assertEqual(by_phrase["quotex withdrawal problem"].index,
+                         by_phrase["quotex withdrawal proof"].index)
+        self.assertNotEqual(by_phrase["quotex zigzag strategy"].index,
+                            by_phrase["quotex withdrawal proof"].index)
+
+    def test_the_rarer_word_wins_when_a_phrase_holds_two_topics(self):
+        """`zigzag strategy` is about zigzag; `strategy` is spread across the corpus."""
+        clusters = clustering.build(self.universe(self.corpus()), min_anchor=3)
+        by_phrase = {p.text: c for c in clusters for p in c.members}
+        self.assertIn("zigzag", by_phrase["quotex zigzag strategy"].label)
+
+    def test_word_order_variants_collapse_into_one_keyword(self):
+        universe = self.universe([
+            "quotex ai trading bot", "ai quotex trading bot", "quotex trading bot ai",
+            "quotex demo account", "quotex demo login", "quotex demo reset",
         ])
-        clusters = clustering.build(universe)
-        by_phrase = {p.text: c.index for c in clusters for p in c.members}
-        self.assertEqual(by_phrase["quotex zigzag strategy"],
-                         by_phrase["quotex zigzag indicator"],
-                         "a rare shared word must group two phrases")
-        self.assertEqual(by_phrase["quotex withdrawal problem"],
-                         by_phrase["quotex withdrawal proof"])
-        self.assertNotEqual(by_phrase["quotex zigzag strategy"],
-                            by_phrase["quotex martingale strategy"],
-                            "sharing only the common word `strategy` is not a topic")
-        self.assertNotEqual(by_phrase["quotex zigzag strategy"],
-                            by_phrase["quotex withdrawal proof"])
+        clusters = clustering.build(universe, min_anchor=3)
+        texts = [p.text for c in clusters for p in c.members]
+        orderings = [t for t in texts if set(t.split()) == {"quotex", "ai", "trading", "bot"}]
+        self.assertEqual(len(orderings), 1,
+                         "three orderings of one keyword must not be three keywords")
+        kept = [p for c in clusters for p in c.members if p.text in orderings][0]
+        self.assertEqual(kept.variants, 3, "the collapsed forms must still be counted")
 
-    def test_the_seed_is_never_what_makes_two_phrases_similar(self):
-        universe = self.universe(["quotex login", "quotex apk"])
-        clusters = clustering.build(universe)
-        self.assertEqual(len(clusters), 2, "sharing only the seed is not similarity")
+    def test_the_number_of_topics_is_bounded(self):
+        """The old algorithm produced 1,796 clusters for 9,499 phrases; this cannot."""
+        phrases = [f"quotex topic{i} thing" for i in range(60)] * 3
+        phrases = [f"{p} {i}" for i, p in enumerate(phrases)]
+        clusters = clustering.build(self.universe(phrases), topics=10, min_anchor=2)
+        self.assertLessEqual(len(clusters), 11, "topics + the long tail")
 
-    def test_every_phrase_lands_in_exactly_one_cluster(self):
-        phrases = ["quotex login", "quotex login page", "quotex apk", "quotex apk download",
-                   "quotex bonus code", "quotex demo"]
-        clusters = clustering.build(self.universe(phrases))
+    def test_a_keyword_with_no_topic_goes_to_the_long_tail_not_a_wrong_one(self):
+        universe = self.universe(self.corpus() + ["quotex erfahrungen"])
+        clusters = clustering.build(universe, min_anchor=3)
+        home = next(c for c in clusters for p in c.members if p.text == "quotex erfahrungen")
+        self.assertEqual(home.label, clustering.TAIL_LABEL,
+                         "an unplaceable keyword must be named, not misfiled")
+
+    def test_every_keyword_lands_in_exactly_one_cluster(self):
+        phrases = self.corpus()
+        clusters = clustering.build(self.universe(phrases), min_anchor=3)
         placed = [p.text for c in clusters for p in c.members]
         self.assertEqual(sorted(placed), sorted(phrases))
         self.assertEqual(len(placed), len(set(placed)))
 
     def test_clusters_come_back_in_priority_order(self):
-        universe = self.universe(["quotex login", "quotex login page", "quotex apk"])
-        clusters = clustering.build(universe)
+        clusters = clustering.build(self.universe(self.corpus()), min_anchor=3)
         self.assertEqual([c.priority for c in clusters],
                          sorted([c.priority for c in clusters], reverse=True))
 
