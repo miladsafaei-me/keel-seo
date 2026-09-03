@@ -13,6 +13,11 @@ from .proxying import (AVAILABLE as PROXIES_AVAILABLE, MISSING_MESSAGE,
                        ProxyPool, accept_suggestions)
 from .suggest import DEFAULT_RATE, SuggestCache, SuggestClient, egress_identity
 
+# Requests in flight when a proxy pool is in use. Higher than any pool is likely
+# to be: surplus workers block harmlessly in acquire(), while a shortfall leaves
+# verified addresses idle and is the difference between 0.4 and 30 queries/second.
+POOLED_WORKERS = 120
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -139,16 +144,22 @@ def main(argv: list[str] | None = None) -> int:
         progress(f"egress {egress['country']} ({egress['ip']}) — this is the harvest's "
                  "geography; autocomplete ignores gl=")
 
-    # Concurrency has to follow the pool, not sit at a constant. A pool serves one
-    # request per address at a time, so N addresses support N requests in flight;
-    # asking for 5 leaves the other N-5 idle no matter how large the pool or how
-    # generous the per-address budget. Measured: a 150-proxy pool at the old fixed
-    # 5 workers ran at 0.4 queries/second, roughly 1/500th of what it could carry.
+    # Concurrency has to match what the pool can carry. A pool serves one request
+    # per address at a time, so N addresses support N requests in flight; a fixed
+    # 5 leaves the rest idle however large the pool is. Measured: a 150-proxy pool
+    # at 5 workers ran 0.4 queries/second, about 1/500th of its capacity.
+    #
+    # It is deliberately NOT sized from len(pool): the pool returns as soon as ten
+    # addresses verify and fills the rest in the background, so reading its length
+    # here samples it at its smallest and pins concurrency to that. Doing exactly
+    # that produced "concurrency: 11 workers" against a pool that grew to
+    # hundreds. Over-provisioning costs nothing instead — a worker with no free
+    # address simply waits in acquire() until one is ready.
     workers = args.workers
     if workers <= 0:
-        workers = min(max(len(pool), 5), 120) if pool is not None else 5
+        workers = POOLED_WORKERS if pool is not None else 5
         progress(f"concurrency: {workers} workers "
-                 f"({'one per proxy, capped' if pool is not None else 'direct'})")
+                 f"({'pooled' if pool is not None else 'direct'})")
 
     client = SuggestClient(
         hl=args.hl,
