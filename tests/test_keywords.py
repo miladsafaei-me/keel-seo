@@ -789,6 +789,21 @@ class TheHarvestWalker(unittest.TestCase):
             self.assertEqual(code, 0)
 
 
+class ThePackageVersion(unittest.TestCase):
+    """It was reporting 0.26.0 from a 0.27.0 install, and nothing failed."""
+
+    def test_it_matches_the_one_file_ci_actually_guards(self):
+        import re
+
+        import keel_seo
+
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        declared = re.search(r'^version\s*=\s*"([^"]+)"',
+                             pyproject.read_text(encoding="utf-8"), re.M)
+        self.assertIsNotNone(declared)
+        self.assertEqual(keel_seo.__version__, declared.group(1))
+
+
 class TheSyncFileList(unittest.TestCase):
     def test_the_response_cache_is_not_a_harvest_format(self):
         self.assertNotIn("jsonl", sync.FORMATS)
