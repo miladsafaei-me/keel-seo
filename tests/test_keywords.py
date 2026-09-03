@@ -19,7 +19,9 @@ from keel_seo.keywords.crawl import (Phrase, Universe, contains_seed, crawl,
                                      merge_markets, score, seed_tokens)
 from keel_seo.keywords.grammar import (BRANCH, DRILL, SEED, expansions,
                                        star_variants)
-from keel_seo.keywords.proxying import accept_suggestions
+from keel_seo.keywords.proxying import (DIRECT_REFUSAL, DirectEgressRefused,
+                                        accept_suggestions,
+                                        require_pooled_egress)
 from keel_seo.keywords.suggest import Response, SuggestCache, SuggestClient, Suggestion
 
 
@@ -808,6 +810,61 @@ class TheSyncFileList(unittest.TestCase):
     def test_the_response_cache_is_not_a_harvest_format(self):
         self.assertNotIn("jsonl", sync.FORMATS)
         self.assertEqual(set(sync.FORMATS), {"xlsx", "json", "csv", "md"})
+
+
+class TheEgressRule(unittest.TestCase):
+    """A harvest never leaves from the machine running it.
+
+    Measured 2026-09-04: a run at the throttled default of 6 q/s, asking from one
+    production address, was refused after 3,909 requests and left its seed two
+    thirds unexpanded. The block is IP-wide, so that host lost the endpoint for
+    everything it asked, not only for the crawl. These tests exist because the
+    two entry points had already drifted apart once — the batch walker defaulted
+    to rotation for months while the single-seed CLI still defaulted to direct,
+    and the harvest that earned the block went through the second one.
+    """
+
+    def test_both_entry_points_default_to_rotation(self):
+        from keel_seo.keywords.__main__ import build_parser as crawler_parser
+
+        self.assertEqual(crawler_parser().parse_args(["quotex"]).proxies, "auto")
+        self.assertEqual(
+            harvest.build_parser().parse_args(["--seeds", "s", "--out", "o"]).proxies,
+            "auto")
+
+    def test_every_spelling_of_direct_egress_is_refused(self):
+        for mode in ("off", "OFF", "none", "direct", ""):
+            with self.subTest(mode=mode):
+                with self.assertRaises(DirectEgressRefused):
+                    require_pooled_egress(mode)
+
+    def test_rotation_is_accepted_and_returned_unchanged(self):
+        self.assertEqual(require_pooled_egress("auto"), "auto")
+
+    def test_the_crawler_refuses_before_it_creates_anything(self):
+        """A run that may not ask must not leave an output directory behind."""
+        from keel_seo.keywords.__main__ import main as crawler_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "out")
+            code = crawler_main(["quotex", "--out", out, "--proxies", "off"])
+            self.assertEqual(code, 1)
+            self.assertFalse(os.path.exists(out),
+                             "the refusal came after the directory was made")
+
+    def test_the_walker_refuses_once_rather_than_per_seed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            seeds = os.path.join(tmp, "seeds.txt")
+            Path(seeds).write_text("quotex\nftmo\n", encoding="utf-8")
+            out = os.path.join(tmp, "out")
+            code = harvest.main(["--seeds", seeds, "--out", out, "--proxies", "off"])
+            self.assertEqual(code, 1)
+            self.assertFalse(os.path.exists(out))
+
+    def test_the_refusal_says_what_to_do_instead(self):
+        """An error that only forbids sends the reader hunting for a flag to flip."""
+        self.assertIn("--proxies auto", DIRECT_REFUSAL)
+        self.assertIn("3,909", DIRECT_REFUSAL)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,10 @@ capability is wanted:
 
 When it is absent, everything except ``--proxies`` keeps working and the CLI
 says exactly what to install rather than failing on an AttributeError.
+
+It also owns the package's **egress policy** — a harvest never leaves from the
+machine running it — stated once in :data:`DIRECT_REFUSAL` and enforced by
+:func:`require_pooled_egress` at every entry point that crawls.
 """
 from __future__ import annotations
 
@@ -53,6 +57,47 @@ MISSING_MESSAGE = (
     "proxy rotation lives in keel-crawler, which is not installed. "
     "Install it with:  pip install 'keel-seo[proxies]'"
 )
+
+# The egress policy, and it is a rule rather than a default.
+#
+# A harvest is never asked from the address running it — not a laptop, and least
+# of all a production host. The endpoint's refusal is IP-wide and outlasts the
+# run, so the machine that trips it loses the endpoint entirely: every other
+# query from that address is refused too, for over an hour, whoever asked it.
+# Throttling does not buy immunity. On 2026-09-04 a harvest asking directly at
+# this package's own default of 6 q/s was refused after 3,909 network calls, on
+# a server shared by six production sites, and left the seed it was collecting
+# two-thirds unexpanded. That is the whole case: the direct path is not a slower
+# route to the same universe, it is the route that ends the run early and takes
+# the address down with it.
+#
+# There is deliberately no override. An escape hatch here is a rule that holds
+# until someone is in a hurry, which is precisely when this block is earned.
+DIRECT_REFUSAL = (
+    "refusing to crawl from this machine's own address. The endpoint's block is "
+    "IP-wide and outlasts the run — measured 2026-09-04: refused after 3,909 "
+    "requests at the default 6 q/s, taking the whole host's access with it. "
+    "Harvest through the rotating pool instead: --proxies auto "
+    "(pip install 'keel-seo[proxies]')."
+)
+
+
+class DirectEgressRefused(RuntimeError):
+    """Raised when a caller asks to crawl from the local address."""
+
+
+def require_pooled_egress(mode: str) -> str:
+    """Return the egress mode to use, or raise if it would be this machine.
+
+    One gate for every entry point, so a second CLI cannot quietly reopen the
+    path the first one closed — which is exactly how this got shipped: the batch
+    walker had defaulted to ``auto`` for months while the single-seed CLI still
+    defaulted to ``off``, and the harvest that got blocked went through the
+    second one.
+    """
+    if (mode or "").strip().lower() in ("", "off", "none", "direct"):
+        raise DirectEgressRefused(DIRECT_REFUSAL)
+    return mode
 
 
 def accept_suggestions(status: int, body: str) -> bool:

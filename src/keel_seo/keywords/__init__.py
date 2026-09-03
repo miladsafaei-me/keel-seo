@@ -7,17 +7,30 @@ shared wording and ranked.
 
     python -m keel_seo.keywords quotex --out ./keywords
 
+**A harvest never leaves from the machine running it.** Google's refusal is
+IP-wide and outlasts the run, so a crawl asked from a laptop or a production host
+costs that entire address its access to the endpoint — measured 2026-09-04, after
+3,909 requests at the throttled default, on a server carrying six live sites.
+Rotation is the only supported egress: ``--proxies auto`` is the default, asking
+directly is refused, and both the single-seed CLI and the batch walker enforce it
+before they create anything. The rule and its evidence live in
+:mod:`keel_seo.keywords.proxying`.
+
 The pieces, in the order the CLI uses them:
 
 * :mod:`keel_seo.keywords.suggest` — the endpoint client, its cache, and the
   egress probe that gives a harvest its only real geography label.
+* :mod:`keel_seo.keywords.proxying` — the egress rule, and the seam to
+  keel-crawler's rotating pool that satisfies it.
 * :mod:`keel_seo.keywords.grammar` — the attachments that surround a term.
 * :mod:`keel_seo.keywords.crawl` — the breadth-first walk and the priority score.
 * :mod:`keel_seo.keywords.cluster` — IDF-weighted lexical clustering and
   deterministic intent tagging.
 * :mod:`keel_seo.keywords.report` — JSON, CSV and Markdown output.
 
-Standard library only, and no API key: it can run anywhere Python runs.
+No API key, and the analysis itself is standard library only. A real harvest
+additionally needs the rotating pool, which is one install away:
+``pip install 'keel-seo[proxies]'``.
 
 The hard limit, stated once here and repeated in every output: **autocomplete
 never returns search volume.** Everything this package produces describes the

@@ -25,11 +25,20 @@ refused exactly like the seed being harvested, so the whole machine loses the
 endpoint, not just the crawl. There is no quota header and no ``Retry-After``, so
 it is visible only as a status code.
 
-Whether the trigger is the *rate* or the *cumulative count* is not known — the
-one observation is ~5,000 requests at 57 q/s. Until that is separated, throttling
-alone cannot be assumed to prevent it, so a single run should stay well under a
-few thousand network calls and lean on the cache across sessions rather than
-trying to finish a large universe in one pass.
+*Throttling does not prevent it.* Whether the trigger was the rate or the
+cumulative count was an open question until 2026-09-04, when a run at this
+module's own default of 6 q/s — a tenth of the rate that first tripped the block
+— was refused after 3,909 requests. Volume from one address is enough on its own,
+so there is no throttle both slow enough to be safe and fast enough to finish a
+universe. **The conclusion is the egress rule in**
+:mod:`keel_seo.keywords.proxying`: a harvest leaves through a rotating pool, or
+it does not run. Asking from the machine itself is refused outright, because the
+cost is never confined to the harvest that earned it — the block takes every
+other request that address makes for over an hour, and on a shared host that is
+six other projects.
+
+The throttle stays, for the pool's sake rather than this machine's: it is what
+holds each rotated address inside the per-address budget that keeps it alive.
 
 This is why the client throttles by default, treats 403/429/503 as a distinct
 condition rather than a generic failure, and gives up deliberately through a
@@ -65,9 +74,12 @@ USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) keel-seo/keywords"
 # naive client mistakes a rate limit for a permanent error.
 BLOCK_CODES = frozenset({403, 429, 503})
 
-# Sustained request rate, in queries per second. An unthrottled run measured 57
-# q/s and was blocked after about 5,000 requests; 6 q/s is deliberately far
-# under that, because a blocked harvest costs far more time than a slow one.
+# Sustained request rate, in queries per second, applied per address. It is not
+# a defence against the block: 6 q/s was chosen as "far under" the 57 q/s that
+# first tripped it, and on 2026-09-04 a 6 q/s run from a single address was
+# blocked anyway, after 3,909 requests. What it does now is hold each rotated
+# proxy inside the per-address budget keel-crawler enforces, which is what keeps
+# a pool usable across runs instead of burning it down in one.
 DEFAULT_RATE = 6.0
 
 # Consecutive rate-limited responses before the crawl is abandoned. Set above

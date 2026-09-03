@@ -20,11 +20,17 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
   one-intent-one-URL registry, its nine invariants and the `keel_seo_intent_check`
   gate; `guarded_prefixes` since v0.7.1), `keel_seo.keywords` (since v0.12.0: the
   market-side half — an autocomplete-only keyword-universe crawler, its lexical
-  clustering and its priority score; standard library only, no key, no model, see
-  README's "Keyword universe" section). **Proxy rotation for it is NOT here** —
-  it belongs to keel-crawler (`keel_crawler.proxy.pool`), soft-imported through
-  the `proxies` extra; `keywords/proxying.py` is only the seam plus the
-  endpoint-specific accept test. And `keel_seo.gsc` — the connector, query
+  clustering and its priority score; no key, no model, see README's "Keyword
+  universe" section). **A harvest never asks from the machine running it** —
+  since v0.28.0 `--proxies auto` is the default and `--proxies off` is refused
+  with no override, in the single-seed CLI and the batch walker alike, because
+  Google's block is IP-wide and outlasts the run (measured 2026-09-04: refused
+  after 3,909 requests at the throttled 6 q/s, on a host carrying six live
+  sites). Do not reintroduce a direct path, and do not default it back to run a
+  quick test. **Proxy rotation itself is NOT here** — it belongs to keel-crawler
+  (`keel_crawler.proxy.pool`), imported through the `proxies` extra, which a real
+  harvest now requires; `keywords/proxying.py` is only the seam, the egress rule,
+  and the endpoint-specific accept test. And `keel_seo.gsc` — the connector, query
   registry, the recurring `pulse` measurement engine (since v0.8.0), the **complete
   Search Console API client** (since v0.11.0: `auth` for shared credentials/transport,
   `analytics` for the full Search Analytics surface, `inspection` for URL Inspection,

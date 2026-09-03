@@ -32,6 +32,7 @@ import subprocess
 import sys
 import time
 
+from .proxying import DirectEgressRefused, require_pooled_egress
 from .report import slugify
 
 # Six hours per seed, handed to the crawler as its own deadline rather than
@@ -79,8 +80,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seconds", type=int, default=DEFAULT_SECONDS,
                         help=f"graceful deadline per seed (default {DEFAULT_SECONDS})")
     parser.add_argument("--proxies", default="auto",
-                        help="'auto' rotates over the shared pool (default); 'off' "
-                             "asks from this machine, which is what earns an IP-wide "
+                        help="'auto' rotates over the shared pool, and is the only "
+                             "mode that runs; 'off' would ask from this machine and "
+                             "is refused, because that is what earns an IP-wide "
                              "block after a few thousand requests")
     parser.add_argument("--refresh", action="store_true",
                         help="re-harvest seeds that already have output")
@@ -91,6 +93,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # Checked here as well as in the crawler, rather than left to the subprocess:
+    # a walk over forty seeds should be refused once, at the start, not forty
+    # times after it has already made an output directory for each of them.
+    try:
+        require_pooled_egress(args.proxies)
+    except DirectEgressRefused as refusal:
+        print(str(refusal), file=sys.stderr)
+        return 1
+
     os.makedirs(args.out, exist_ok=True)
 
     def log(message: str) -> None:

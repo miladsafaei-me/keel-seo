@@ -11,8 +11,9 @@ from .crawl import crawl, merge_markets
 from .report import metadata, write_all
 from .proxying import (AVAILABLE as PROXIES_AVAILABLE, MISSING_MESSAGE,
                        PER_PROXY_PER_HOUR, PER_PROXY_PER_MINUTE, PER_PROXY_RPS,
-                       ProxyPool, accept_suggestions, harvest_lock)
-from .suggest import DEFAULT_RATE, SuggestCache, SuggestClient, egress_identity
+                       DirectEgressRefused, ProxyPool, accept_suggestions,
+                       harvest_lock, require_pooled_egress)
+from .suggest import DEFAULT_RATE, SuggestCache, SuggestClient
 
 # Requests in flight when a proxy pool is in use. Higher than any pool is likely
 # to be: surplus workers block harmlessly in acquire(), while a shortfall leaves
@@ -81,11 +82,14 @@ def build_parser() -> argparse.ArgumentParser:
                         help="skip the no-space suffix sweep (quotexa, quotexb, ...)")
     parser.add_argument("--wildcards", action="store_true",
                         help="also ask '*' templates (measured as low yield)")
-    parser.add_argument("--proxies", default="off", metavar="MODE",
-                        help=("'off' (default) asks directly from this machine; "
-                              "'auto' rotates over a pool of free proxies, each "
-                              "validated against the endpoint itself. Needs "
-                              "keel-crawler: pip install 'keel-seo[proxies]'"))
+    parser.add_argument("--proxies", default="auto", metavar="MODE",
+                        help=("'auto' (default, and the only mode that runs) "
+                              "rotates over a pool of free proxies, each validated "
+                              "against the endpoint itself. Needs keel-crawler: "
+                              "pip install 'keel-seo[proxies]'. 'off' would ask "
+                              "from this machine and is refused: the endpoint's "
+                              "block is IP-wide and costs the host far more than "
+                              "the harvest is worth"))
     parser.add_argument("--proxy-want", type=int, default=60,
                         help="how many working proxies to collect (default 60)")
     parser.add_argument("--proxy-start-at", type=int, default=10,
@@ -117,6 +121,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
+    # Before anything is created on disk: a run that may not ask should not leave
+    # an output directory and a cache file behind as evidence that it tried.
+    try:
+        require_pooled_egress(args.proxies)
+    except DirectEgressRefused as refusal:
+        print(str(refusal), file=sys.stderr)
+        return 1
+
     def progress(message: str) -> None:
         if not args.quiet:
             print(message, file=sys.stderr, flush=True)
@@ -125,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
     os.makedirs(args.out, exist_ok=True)
 
     with contextlib.ExitStack() as stack:
-        if args.proxies != "off" and harvest_lock is not None:
+        if harvest_lock is not None:
             # One spender at a time per machine. The per-address budgets that
             # keep the pool alive are enforced in memory, so a second harvest
             # running beside this one charges every address twice its limit and
@@ -142,37 +154,34 @@ def _run(args, progress, cache_path: str) -> int:
 
     # The egress is resolved before the client is built, because it is part of
     # the cache key: a harvest must never inherit answers collected from another
-    # country's exit.
-    pool = None
-    if args.proxies != "off":
-        if not PROXIES_AVAILABLE:
-            print(MISSING_MESSAGE, file=sys.stderr)
-            return 1
-        probe_url = SuggestClient(hl=args.hl, ds=args.ds,
-                                  client=args.client).endpoint_url("test")
-        # accept= is the endpoint-specific half: a captive portal also answers
-        # 200, and would otherwise be admitted to the pool and then fail every
-        # real request.
-        pool = ProxyPool.build(probe_url, want=args.proxy_want,
-                               start_at=args.proxy_start_at,
-                               candidates=args.proxy_candidates,
-                               accept=accept_suggestions, target="suggestqueries.google.com",
-                               rps=args.proxy_rps, per_minute=args.proxy_per_minute,
-                               per_hour=args.proxy_per_hour, progress=progress)
-        if not len(pool):
-            print("no proxy answered the endpoint; refusing to start a crawl that "
-                  "would have no egress", file=sys.stderr)
-            return 1
-        # A rotating pool leaves from many countries at once. That is how the
-        # request volume is afforded, and - now that the market is asked for by
-        # name - it has no bearing on which market the answers describe.
-        egress = {"ip": "", "country": "mixed",
-                  "org": f"rotating pool of {len(pool)} proxies"}
-        progress(f"egress mixed across {len(pool)} proxies — volume only; the "
-                 "market comes from --markets")
-    else:
-        egress = egress_identity()
-        progress(f"egress {egress['country']} ({egress['ip']})")
+    # country's exit. There is only one branch here now — asking from this
+    # machine's own address is refused in main(), so the pool is the egress or
+    # there is no run.
+    if not PROXIES_AVAILABLE:
+        print(MISSING_MESSAGE, file=sys.stderr)
+        return 1
+    probe_url = SuggestClient(hl=args.hl, ds=args.ds,
+                              client=args.client).endpoint_url("test")
+    # accept= is the endpoint-specific half: a captive portal also answers
+    # 200, and would otherwise be admitted to the pool and then fail every
+    # real request.
+    pool = ProxyPool.build(probe_url, want=args.proxy_want,
+                           start_at=args.proxy_start_at,
+                           candidates=args.proxy_candidates,
+                           accept=accept_suggestions, target="suggestqueries.google.com",
+                           rps=args.proxy_rps, per_minute=args.proxy_per_minute,
+                           per_hour=args.proxy_per_hour, progress=progress)
+    if not len(pool):
+        print("no proxy answered the endpoint; refusing to start a crawl that "
+              "would have no egress", file=sys.stderr)
+        return 1
+    # A rotating pool leaves from many countries at once. That is how the
+    # request volume is afforded, and - now that the market is asked for by
+    # name - it has no bearing on which market the answers describe.
+    egress = {"ip": "", "country": "mixed",
+              "org": f"rotating pool of {len(pool)} proxies"}
+    progress(f"egress mixed across {len(pool)} proxies — volume only; the "
+             "market comes from --markets")
 
     # Concurrency has to match what the pool can carry. A pool serves one request
     # per address at a time, so N addresses support N requests in flight; a fixed
@@ -187,9 +196,8 @@ def _run(args, progress, cache_path: str) -> int:
     # address simply waits in acquire() until one is ready.
     workers = args.workers
     if workers <= 0:
-        workers = POOLED_WORKERS if pool is not None else 5
-        progress(f"concurrency: {workers} workers "
-                 f"({'pooled' if pool is not None else 'direct'})")
+        workers = POOLED_WORKERS
+        progress(f"concurrency: {workers} workers (pooled)")
 
     markets = [code.strip().upper() for code in args.markets.split(",")
                if code.strip()]
@@ -260,13 +268,13 @@ def _run(args, progress, cache_path: str) -> int:
         f"{meta['queries_asked']:,} queries · {meta['network_calls']:,} network calls · "
         f"{meta['elapsed_seconds']}s"
     )
-    if pool is not None:
-        progress(f"proxy pool at end: {pool.stats()}")
+    progress(f"proxy pool at end: {pool.stats()}")
     if universe.blocked:
         progress(
             f"WARNING: rate-limited after {meta['network_calls']:,} requests; "
             f"{meta['unexpanded_phrases']:,} phrases left unexpanded. The output is "
-            "sound but incomplete — re-run later with a lower --rate to continue."
+            "sound but incomplete — the response cache keeps it, so re-run with a "
+            "larger --proxy-want to finish it."
         )
     for kind, path in paths.items():
         print(f"{kind}: {path}")

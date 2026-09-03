@@ -505,10 +505,19 @@ of keyword work, and the half no amount of first-party data can reconstruct.
 One source only: Google's autocomplete endpoint, keyless and free.
 
 ```bash
+pip install 'keel-seo[proxies]'                            # required, see below
 python -m keel_seo.keywords quotex --out ./keywords
 python -m keel_seo.keywords quotex --markets us,in,br      # one crawl per market
 python -m keel_seo.keywords "pip value calculator" --levels 2 --rate 5
 ```
+
+**A harvest never leaves from the machine running it — not a laptop, and least of
+all a production host.** Google's refusal is IP-wide and outlasts the run, so the
+address that trips it loses the endpoint for everything it asks, not just for the
+crawl. Rotation is the only supported egress: `--proxies auto` is the default,
+`--proxies off` is refused, and both entry points check before they create so
+much as an output directory. The measurement that settled this, and why
+throttling is not an alternative to it, is under [Rate limits](#rate-limits).
 
 Four files come out, all in priority order: `<seed>.json` (the full record, every
 signal per phrase), `<seed>.csv` (flat), `<seed>.md` (clusters, intents and the
@@ -675,11 +684,23 @@ requests. Two things about that block matter more than its existence. It lasted
 refused exactly like the harvested seed, so the whole machine loses the endpoint.
 There is no `Retry-After` to read.
 
-Whether the trigger is the rate or the cumulative count is unknown; the single
-observation is ~5,000 requests at 57 q/s. Until those are separated, **do not
-assume throttling alone prevents it** — keep one run well under a few thousand
-network calls and let the cache carry a large universe across several sessions.
-So the client throttles to 6 q/s by default, treats
+**Throttling does not prevent it, and that is now measured rather than feared.**
+On 2026-09-04 a harvest ran at the package's own default of 6 q/s — a tenth of
+the rate that first tripped the block — from a single production address, and was
+refused after 3,909 requests. It was collecting `FundingPips` and stopped with
+797 keywords and 496 phrases still unexpanded, about a third of the universe it
+had been asked for. Volume from one address is enough on its own, so there is no
+throttle both slow enough to be safe and fast enough to finish a universe.
+
+The conclusion is a rule, not a recommendation: **a crawl leaves through the
+rotating pool, or it does not run.** `--proxies auto` is the default and
+`--proxies off` exits with a refusal that explains itself. There is deliberately
+no override flag — an escape hatch here is a rule that holds until someone is in
+a hurry, which is exactly when this block is earned.
+
+The throttle stays, for the pool's sake rather than the host's: it is what holds
+each rotated address inside the per-address budget that keeps it alive. So the
+client throttles to 6 q/s by default, treats
 403/429/503 as a distinct condition rather than a generic error, and trips a
 circuit breaker that ends the crawl cleanly — keeping everything collected so far
 and saying in the report that the harvest is incomplete. Every response is cached
@@ -687,16 +708,23 @@ on disk by (egress country, client, language, vertical, query), so a re-run afte
 a block repeats none of the work already done — and a run from a new country
 starts its own namespace rather than quietly inheriting another market's answers.
 
-### Rotating proxies (`--proxies auto`)
+### Rotating proxies (`--proxies auto`, the only egress)
 
 A single exit address is one mistake away from losing the source for a day, and
-the measured block outlasted **sixteen hours**. `--proxies auto` removes that
-single point of failure by rotating the crawl across many addresses.
+the measured block outlasted **sixteen hours**. Rotation removes that single
+point of failure by spreading the crawl across many addresses, which is why it is
+the default and the only mode that runs.
 
 ```bash
 pip install 'keel-seo[proxies]'
-python -m keel_seo.keywords quotex --proxies auto --proxy-want 60
+python -m keel_seo.keywords quotex --proxy-want 150
 ```
+
+Throughput follows the pool, not the throttle: roughly `live proxies x 200/hour`,
+because each address is capped at 200 requests an hour. A 148-address pool
+measured a ceiling of ~222 requests/second on 2026-09-04. The way to finish a
+large universe faster is more addresses (`--proxy-want`), never a looser
+per-address limit — that limit is what keeps the addresses alive.
 
 **The rotation itself is not this package's.** It lives in **keel-crawler**
 (`keel_crawler.proxy.pool`), which owns harvesting from sixteen published lists,
@@ -719,9 +747,10 @@ only wants the Landing registry does not install a crawler, and `--proxies` says
 what to install rather than failing obscurely.
 
 Two consequences for the output. **The pool buys request volume, not geography.**
-Which market the answers describe comes from `--markets`, so a pooled run and a
-direct run of the same market are the same harvest — the pool only decides how
-fast it can be afforded. And a 403 through the pool is not a rate limit but one
+Which market the answers describe comes from `--markets`, asked of Google by name
+with `gl=`; the addresses the requests leave from have no bearing on it, and only
+decide how fast the harvest can be afforded. And a 403 through the pool is not a
+rate limit but one
 spent address — evicted immediately, no backoff — so the circuit breaker trips
 only when the pool empties.
 
@@ -737,7 +766,7 @@ second run waits rather than colliding.
 The service layer ships with the package, so no project reproduces it:
 
 ```bash
-# on the host that has an unblocked IP
+# on the host that runs the crawl - its own address is never the egress
 python -m keel_seo.keywords.harvest --seeds seeds.txt --out ./out --markets us,in
 # on the machine that wants the spreadsheets
 python -m keel_seo.keywords.sync --host root@1.2.3.4 --key ~/.ssh/id \
@@ -776,4 +805,6 @@ binaryoption.trading to resolve glossary-versus-pillar cannibalization (v0.7.0),
 the need it answers so a competitor cannot be written unnoticed (v0.7.1). v0.12.0 adds
 `keel_seo.keywords`, the market-side counterpart to the GSC client: autocomplete-only
 keyword-universe crawling, lexical clustering and priority ranking, with no key, no
-dependency and no model.
+dependency and no model. v0.28.0 makes rotation that crawler's only egress — asking
+Google from the machine running the harvest is refused, because the block it earns
+is IP-wide and costs the whole host its access.
