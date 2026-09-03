@@ -46,6 +46,7 @@ def metadata(universe: Universe, clusters: list[Cluster], egress: dict,
         "unexpanded_phrases": universe.unexpanded,
         "exhausted": universe.exhausted,
         "stopped_by_rate_limit": universe.blocked,
+        "stopped_by_time_limit": universe.timed_out,
         "rate_limited_responses": universe.rate_limited,
         "elapsed_seconds": round(universe.elapsed, 1),
         "off_seed_rejected": len(universe.off_seed),
@@ -128,6 +129,12 @@ def write_markdown(path: str, universe: Universe, clusters: list[Cluster],
             "was collected before the block and is sound; it is not the complete "
             "universe. Re-run later with a lower `--rate` — the cache means the "
             "work already done is not repeated.")
+        add("")
+    elif universe.timed_out:
+        add(f"⏱️ **The crawl reached its time limit** and stopped cleanly, with "
+            f"{meta['unexpanded_phrases']:,} phrases still unexpanded. Everything "
+            "below was collected and kept — nothing was lost to the deadline. Every "
+            "response is cached, so re-running resumes here rather than restarting.")
         add("")
     elif not universe.exhausted:
         add(f"⚠️ The crawl stopped with **{meta['unexpanded_phrases']:,} phrases "

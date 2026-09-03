@@ -121,6 +121,7 @@ class Universe:
     errors: int = 0
     unexpanded: int = 0
     exhausted: bool = False
+    timed_out: bool = False
     blocked: bool = False
     rate_limited: int = 0
     elapsed: float = 0.0
@@ -140,9 +141,19 @@ def crawl(
     frontier_cap: int = 300,
     tight: bool = True,
     wildcards: bool = False,
+    max_seconds: float = 0.0,
     progress=None,
 ) -> Universe:
-    """Expand `seed` until it stops yielding, or until `budget` queries are spent."""
+    """Expand `seed` until it stops yielding, or a stated limit is reached.
+
+    `max_seconds` is a *graceful* deadline, and that distinction is the whole
+    point of it. A run killed from outside — an external ``timeout``, a systemd
+    ``TimeoutStartSec`` — dies between levels and writes nothing, because output
+    is produced once at the end. That happened to a six-hour `quotex` harvest
+    which had already found 8,513 phrases and left none of them on disk. Given
+    its own deadline the crawl stops at the same moment, keeps everything, and
+    says in the report that it ran out of time rather than out of universe.
+    """
     started = time.time()
     tokens = seed_tokens(seed)
     universe = Universe(seed=seed)
@@ -154,8 +165,16 @@ def crawl(
         if progress:
             progress(message)
 
+    deadline = started + max_seconds if max_seconds else 0.0
+
+    def out_of_time() -> bool:
+        return bool(deadline) and time.time() >= deadline
+
     def run(queries: list[str], level: int) -> list:
-        """Ask what has not been asked, record every answer, respect the budget."""
+        """Ask what has not been asked, record every answer, respect the limits."""
+        if out_of_time():
+            universe.timed_out = True
+            return []
         fresh = [q for q in queries if q not in asked]
         room = budget - universe.queries_asked
         if room <= 0:
@@ -193,6 +212,10 @@ def crawl(
     for level in range(levels + 1):
         if not frontier or universe.queries_asked >= budget or universe.blocked:
             break
+        if out_of_time():
+            universe.timed_out = True
+            announce("  time limit reached — stopping and keeping everything found")
+            break
         before = len(universe.phrases)
         tier = SEED if level == 0 else BRANCH
         queries = [
@@ -208,7 +231,8 @@ def crawl(
         # means that corner of the space is already fully reported.
         for round_index in range(saturate):
             saturated = [r for r in responses if r.saturated]
-            if not saturated or universe.queries_asked >= budget or universe.blocked:
+            if (not saturated or universe.queries_asked >= budget
+                    or universe.blocked or out_of_time()):
                 break
             drill = [q for r in saturated for q in expansions(r.query, DRILL)]
             announce(
@@ -228,7 +252,7 @@ def crawl(
         candidates.sort(key=lambda p: (-p.reach, p.best_rank, -p.max_relevance))
         universe.unexpanded = len(candidates)
         frontier = [p.text for p in candidates[:frontier_cap]]
-        if universe.blocked:
+        if universe.blocked or universe.timed_out:
             break
         if not candidates:
             universe.exhausted = True

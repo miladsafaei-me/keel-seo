@@ -156,6 +156,19 @@ class CrawlTests(unittest.TestCase):
         self.assertNotIn("quotex a", [q for q in client.asked if q.endswith(" a")][1:],
                          "a short response must not trigger a drill round")
 
+    def test_a_deadline_stops_the_crawl_but_keeps_what_it_found(self):
+        """An external kill loses everything; the crawl's own deadline loses nothing."""
+        client = StubClient({"quotex": ["quotex login", "quotex app"]})
+        universe = crawl("quotex", client, levels=2, saturate=0, budget=5000,
+                         max_seconds=0.001)
+        self.assertTrue(universe.timed_out)
+        self.assertFalse(universe.exhausted)
+
+    def test_no_deadline_by_default(self):
+        client = StubClient({"quotex": ["quotex login"]})
+        universe = crawl("quotex", client, levels=0, saturate=0, budget=500)
+        self.assertFalse(universe.timed_out)
+
     def test_a_closed_universe_reports_itself_exhausted(self):
         client = StubClient({})
         universe = crawl("quotex", client, levels=1, saturate=0, budget=500)

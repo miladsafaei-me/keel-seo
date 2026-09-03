@@ -82,6 +82,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"per-proxy requests per minute (default {PER_PROXY_PER_MINUTE})")
     parser.add_argument("--proxy-per-hour", type=int, default=PER_PROXY_PER_HOUR,
                         help=f"per-proxy requests per hour (default {PER_PROXY_PER_HOUR})")
+    parser.add_argument("--max-seconds", type=float, default=0,
+                        help=("stop gracefully after this many seconds and still "
+                              "write everything found (0 = no deadline). Always "
+                              "prefer this to an external timeout, which kills the "
+                              "run between levels and loses the whole harvest"))
     parser.add_argument("--quiet", action="store_true")
     return parser
 
@@ -149,6 +154,7 @@ def main(argv: list[str] | None = None) -> int:
         frontier_cap=args.frontier,
         tight=not args.no_tight,
         wildcards=args.wildcards,
+        max_seconds=args.max_seconds,
         progress=progress,
     )
     if not universe.phrases:
