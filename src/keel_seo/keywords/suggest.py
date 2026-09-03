@@ -126,6 +126,10 @@ class Response:
     suggestions: tuple[Suggestion, ...]
     capacity: int
     error: str | None = None
+    # Which country this answer came from. Autocomplete replies according to the
+    # requesting IP, so the same query returns different phrases from different
+    # exits - which makes the country part of the answer, not metadata about it.
+    country: str = ""
 
     @property
     def saturated(self) -> bool:
@@ -204,6 +208,8 @@ class SuggestClient:
     retries: int = 3
     rate: float = DEFAULT_RATE
     pool: object | None = None
+    # Country of this machine's own exit, used when no pool is in play.
+    direct_country: str = ""
     cache: SuggestCache = field(default_factory=lambda: SuggestCache(None))
     calls: int = 0
     errors: int = 0
@@ -237,7 +243,10 @@ class SuggestClient:
             params["ds"] = self.ds
         return f"{ENDPOINT}?{urllib.parse.urlencode(params)}"
 
-    def _request_pooled(self, url: str) -> list | None:
+    def _request_pooled_with_origin(self, url: str):
+        return self._request_pooled(url, want_origin=True)
+
+    def _request_pooled(self, url: str, want_origin: bool = False):
         """Ask through the pool, changing address rather than waiting on a refusal.
 
         With one exit address a 403 is a wall to back off from. With a pool it is
@@ -268,7 +277,8 @@ class SuggestClient:
                 self.pool.release(proxy)
             if status == 200 and body.startswith("["):
                 self.pool.report_ok(proxy)
-                return json.loads(body)
+                parsed = json.loads(body)
+                return (parsed, proxy.country) if want_origin else parsed
             if status in BLOCK_CODES:
                 self.pool.report_blocked(proxy)
                 continue
@@ -303,13 +313,15 @@ class SuggestClient:
     def fetch(self, query: str) -> Response:
         key = self.cache.key(self.client, self.hl, self.ds, query)
         payload = self.cache.get(key)
+        country = ""
         if payload is None:
             if self.blocked:
                 # The breaker has tripped. Answering from here costs nothing and
                 # keeps a stopping crawl from spending its budget on refusals.
                 return Response(query, (), self.capacity, error="blocked")
             try:
-                payload = self._parse(self._request(query))
+                payload, country = self._request_with_origin(query)
+                payload = self._parse(payload)
             except RateLimited as exc:
                 self._note_block()
                 return Response(query, (), self.capacity, error=f"rate-limited: {exc}")
@@ -318,7 +330,9 @@ class SuggestClient:
                 return Response(query, (), self.capacity, error=repr(exc)[:120])
             self._note_success()
             self.calls += 1
-            self.cache.put(key, payload)
+            self.cache.put(key, {"c": country, "s": payload})
+        elif isinstance(payload, dict):
+            country, payload = payload.get("c", ""), payload.get("s", [])
         return Response(
             query=query,
             suggestions=tuple(
@@ -326,7 +340,14 @@ class SuggestClient:
                 for rank, (phrase, relevance) in enumerate(payload, 1)
             ),
             capacity=self.capacity,
+            country=country,
         )
+
+    def _request_with_origin(self, query: str):
+        """The raw payload plus the country it was fetched from."""
+        if self.pool is None:
+            return self._request(query), self.direct_country
+        return self._request_pooled_with_origin(self.endpoint_url(query))
 
     @staticmethod
     def _parse(raw: list | None) -> list:

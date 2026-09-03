@@ -362,6 +362,12 @@ class WorkbookTests(unittest.TestCase):
     def test_every_cluster_row_links_to_its_own_keywords(self):
         book, clusters = self._workbook()
         sheet, keywords = book["Clusters"], book["Keywords"]
+        # Find the cluster column by its header, not by position: a new column
+        # inserted before it should not make this test fail for the wrong reason.
+        from openpyxl.utils import get_column_letter
+
+        headers = {c.value: get_column_letter(c.column) for c in keywords[1]}
+        cluster_col = headers["Cluster"]
         for row in range(2, sheet.max_row + 1):
             link = sheet[f"A{row}"].hyperlink
             self.assertIsNotNone(link, f"cluster row {row} is not clickable")
@@ -370,7 +376,8 @@ class WorkbookTests(unittest.TestCase):
             self.assertTrue(link.location.endswith(tuple("0123456789")))
             # The link must land on a row that really belongs to that cluster.
             target_row = int(link.location.split("A")[-1])
-            self.assertEqual(keywords[f"C{target_row}"].value, sheet[f"A{row}"].value)
+            self.assertEqual(keywords[f"{cluster_col}{target_row}"].value,
+                             sheet[f"A{row}"].value)
 
     def test_cluster_links_are_internal_jumps_not_external_targets(self):
         """The bug LibreOffice exposed and Excel had been hiding.

@@ -86,16 +86,16 @@ def write_csv(path: str, clusters: list[Cluster]) -> None:
     with open(path, "w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(
-            ["priority", "keyword", "cluster", "cluster_label", "intent",
+            ["priority", "keyword", "country", "cluster", "cluster_label", "intent",
              "best_rank", "reach", "relevance", "level", "words", "variants"]
         )
         for cluster in clusters:
             for phrase in cluster.members:
                 writer.writerow(
-                    [round(phrase.priority, 1), phrase.text, cluster.index,
-                     cluster.label, cluster.intent, phrase.best_rank, phrase.reach,
-                     phrase.max_relevance, phrase.first_level, phrase.words,
-                     phrase.variants]
+                    [round(phrase.priority, 1), phrase.text, phrase.country,
+                     cluster.index, cluster.label, cluster.intent, phrase.best_rank,
+                     phrase.reach, phrase.max_relevance, phrase.first_level,
+                     phrase.words, phrase.variants]
                 )
 
 
@@ -216,6 +216,10 @@ COLUMN_MEANINGS = (
     ("Level", "Which round found it. 0 came straight from the seed; higher numbers "
               "are deeper in the tail."),
     ("Best rank", "Its best position in Google's suggestion list. 1 is the top."),
+    ("Country", "Which country's IP surfaced this phrase most often. Google "
+                "answers autocomplete by the requesting IP, so a phrase can be "
+                "genuinely local to one market. Blank means it came from cache "
+                "collected before countries were recorded."),
     ("Variants", "How many ways the same keyword was typed, merged into this one "
                  "row. 1 means it was only seen one way."),
     ("Intent", "What the searcher wants: reach a page (navigational), learn "
@@ -273,18 +277,19 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
     clusters_sheet = book.create_sheet("Clusters")
     keywords = book.create_sheet("Keywords")
 
-    keywords.append(["Priority", "Keyword", "Cluster", "Cluster label", "Intent",
-                     "Best rank", "Reach", "Relevance", "Level", "Words", "Variants"])
+    keywords.append(["Priority", "Keyword", "Country", "Cluster", "Cluster label",
+                     "Intent", "Best rank", "Reach", "Relevance", "Level", "Words",
+                     "Variants"])
     # Remember where each cluster starts so the Clusters sheet can link to it.
     first_row: dict[int, int] = {}
     for cluster in clusters:
         first_row[cluster.index] = keywords.max_row + 1
         for phrase in cluster.members:
-            keywords.append([round(phrase.priority, 1), phrase.text, cluster.index,
-                             cluster.label, cluster.intent, phrase.best_rank,
-                             phrase.reach, phrase.max_relevance, phrase.first_level,
-                             phrase.words, phrase.variants])
-    style_header(keywords, [9, 52, 9, 30, 15, 11, 8, 11, 8, 8, 9])
+            keywords.append([round(phrase.priority, 1), phrase.text, phrase.country,
+                             cluster.index, cluster.label, cluster.intent,
+                             phrase.best_rank, phrase.reach, phrase.max_relevance,
+                             phrase.first_level, phrase.words, phrase.variants])
+    style_header(keywords, [9, 52, 9, 9, 30, 15, 11, 8, 11, 8, 8, 9])
     keywords.freeze_panes = "A2"
     keywords.auto_filter.ref = keywords.dimensions
 

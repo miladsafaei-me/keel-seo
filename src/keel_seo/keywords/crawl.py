@@ -84,9 +84,18 @@ class Phrase:
     parents: set[str] = field(default_factory=set)
     priority: float = 0.0
     cluster: int = -1
+    # Which exits surfaced this phrase, and how often. Autocomplete answers by
+    # requesting IP, so a phrase can be genuinely local to one country - and a
+    # keyword list that cannot say which is one nobody can act on per market.
+    countries: dict = field(default_factory=dict)
     # How many surface forms this keyword absorbed, e.g. "quotex ai trading bot"
     # standing for the four orderings Google also returns. 1 means it was unique.
     variants: int = 1
+
+    @property
+    def country(self) -> str:
+        """The exit that surfaced this phrase most often, or "" if unrecorded."""
+        return max(self.countries, key=self.countries.get) if self.countries else ""
 
     @property
     def reach(self) -> int:
@@ -107,6 +116,8 @@ class Phrase:
             "level": self.first_level,
             "words": self.words,
             "variants": self.variants,
+            "country": self.country,
+            "countries": dict(sorted(self.countries.items(), key=lambda kv: -kv[1])),
             "cluster": self.cluster,
         }
 
@@ -205,6 +216,9 @@ def crawl(
                     phrase.best_rank = min(phrase.best_rank, suggestion.rank)
                     phrase.max_relevance = max(phrase.max_relevance, suggestion.relevance)
                 phrase.parents.add(response.query)
+                if response.country:
+                    phrase.countries[response.country] = (
+                        phrase.countries.get(response.country, 0) + 1)
         if client.blocked:
             # Google has started refusing us. Everything already collected is
             # kept and written out; continuing would only convert budget into
