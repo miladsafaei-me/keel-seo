@@ -262,6 +262,7 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
         from openpyxl import Workbook
         from openpyxl.styles import Alignment, Font, PatternFill
         from openpyxl.utils import get_column_letter
+        from openpyxl.worksheet.hyperlink import Hyperlink
     except ImportError:
         return False
 
@@ -306,12 +307,18 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
                                cluster.size, round(cluster.priority, 1),
                                cluster.head.text, "open ->"])
         row = clusters_sheet.max_row
-        target = f"#Keywords!A{first_row[cluster.index]}"
-        # Both the number and the arrow are clickable, so the row works however
-        # the reader reaches for it.
+        # An in-workbook jump is a `location`, NOT a target. Assigning a plain
+        # "#Sheet!A1" string makes openpyxl write an EXTERNAL relationship whose
+        # target merely starts with "#", which is malformed: LibreOffice ignores
+        # it outright and Excel only resolves it by leniency. Building the
+        # Hyperlink with location= and no target emits the standard form -
+        # <hyperlink ref="A2" location="'Keywords'!A2"/> with no relationship -
+        # which every spreadsheet reads. The sheet name is quoted so a name with
+        # a space would not break it either.
+        location = f"'Keywords'!A{first_row[cluster.index]}"
         for column in ("A", "G"):
             cell = clusters_sheet[f"{column}{row}"]
-            cell.hyperlink = target
+            cell.hyperlink = Hyperlink(ref=f"{column}{row}", location=location)
             cell.font = link_font
     style_header(clusters_sheet, [9, 32, 15, 10, 10, 52, 16])
     clusters_sheet.freeze_panes = "A2"

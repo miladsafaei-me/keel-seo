@@ -362,10 +362,54 @@ class WorkbookTests(unittest.TestCase):
         for row in range(2, sheet.max_row + 1):
             link = sheet[f"A{row}"].hyperlink
             self.assertIsNotNone(link, f"cluster row {row} is not clickable")
-            self.assertTrue(link.target.startswith("#Keywords!A"))
+            # location, not target: an in-workbook jump carries no external target.
+            self.assertIsNone(link.target, "an internal jump must have no target")
+            self.assertTrue(link.location.endswith(tuple("0123456789")))
             # The link must land on a row that really belongs to that cluster.
-            target_row = int(link.target.split("A")[-1])
+            target_row = int(link.location.split("A")[-1])
             self.assertEqual(keywords[f"C{target_row}"].value, sheet[f"A{row}"].value)
+
+    def test_cluster_links_are_internal_jumps_not_external_targets(self):
+        """The bug LibreOffice exposed and Excel had been hiding.
+
+        Assigning a plain "#Sheet!A1" string makes openpyxl emit an EXTERNAL
+        relationship whose target starts with "#". That is malformed for an
+        in-workbook jump: LibreOffice ignored it entirely (603 links, 0 internal)
+        while Excel resolved it only by leniency. The standard form is a
+        `location` attribute and no relationship at all, so the XML is asserted
+        here rather than the openpyxl object, which reports both cases the same.
+        """
+        import re
+        import tempfile
+        import zipfile
+
+        from keel_seo.keywords import report
+
+        universe = self.universe()
+        clusters = clustering.build(universe, min_anchor=3)
+        meta = report.metadata(universe, clusters,
+                               {"ip": "", "country": "mixed", "org": "pool"},
+                               SuggestClient(cache=SuggestCache(None), rate=0))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "wb.xlsx")
+            if not report.write_xlsx(path, universe, clusters, meta):
+                self.skipTest("openpyxl not installed")
+            archive = zipfile.ZipFile(path)
+            tags = []
+            for name in archive.namelist():
+                if name.startswith("xl/worksheets/sheet") and name.endswith(".xml"):
+                    # The trailing space matters: <hyperlinks> is the container,
+                    # not a link, and would fail every assertion below.
+                    tags += re.findall(r"<hyperlink [^>]*>",
+                                       archive.read(name).decode("utf-8"))
+            self.assertTrue(tags, "the Clusters sheet should carry links")
+            for tag in tags:
+                self.assertIn("location=", tag)
+                self.assertNotIn("r:id=", tag,
+                                 "an internal jump must not go through a relationship")
+            rels = [n for n in archive.namelist()
+                    if "worksheets/_rels" in n and "hyperlink" in archive.read(n).decode()]
+            self.assertEqual(rels, [], "internal jumps need no relationship file")
 
     def test_the_other_three_formats_survive_a_missing_openpyxl(self):
         import builtins
