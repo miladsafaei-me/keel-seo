@@ -201,38 +201,26 @@ def write_markdown(path: str, universe: Universe, clusters: list[Cluster],
         handle.write("\n".join(lines) + "\n")
 
 
+# Short enough to be read standing up. The reasoning behind the weights, the
+# measured correlations and the tuning evidence live in the package README - a
+# glossary nobody finishes explains nothing, and this one sits in a spreadsheet
+# where every extra clause is a row the reader scrolls past.
 COLUMN_MEANINGS = (
-    ("Priority", "0-100, the one number to sort by. A weighted blend of the four "
-                 "columns below (reach 60%, relevance 20%, rank 10%, level 10%). "
-                 "It ranks the SHAPE of demand, never its size: autocomplete "
-                 "returns no search volume and no parameter exists that would "
-                 "make it. Validated against a paid volume export, it correlates "
-                 "+0.42 with real volume - enough to separate 'worth a page' from "
-                 "'tail', not enough to choose between two close candidates."),
-    ("Reach", "How many DIFFERENT queries independently returned this phrase. The "
-              "strongest signal in the file: on its own it correlates +0.44 with "
-              "real search volume, better than anything else here. A phrase 90 "
-              "separate queries all surfaced sits at the centre of the topic; one "
-              "that appeared once is incidental."),
-    ("Relevance", "Google's own score for the suggestion, highest seen. Roughly "
-                  "550-1250; values above 1000 are reserved for the one or two "
-                  "phrases it treats as near-exact matches. Correlates +0.18 with "
-                  "real volume."),
-    ("Level", "Which round found it. 0 = came straight from the seed itself, "
-              "1 = found by re-seeding a level-0 phrase, and so on. Lower is "
-              "closer to the head of the topic."),
-    ("Best rank", "Position in Google's suggestion list, best ever seen (1 = top). "
-                  "Google orders roughly by popularity, but on its own this is the "
-                  "weakest predictor here (+0.15), which is why it carries only "
-                  "10% of Priority."),
-    ("Variants", "How many ways the same keyword was typed. \"quotex ai trading "
-                 "bot\", \"ai quotex trading bot\" and \"quotex trading bot ai\" are "
-                 "one keyword asked three ways; the highest-priority form is kept "
-                 "and the rest counted here. 1 means it was unique."),
-    ("Intent", "What the searcher wants, decided from the words alone: "
-               "navigational (reach a thing), informational (know something), "
-               "commercial (compare before buying), transactional (act now), or "
-               "brand (the seed plus a bare noun, no modifier)."),
+    ("Priority", "How promising the keyword is, 0-100. Sort by this. It measures how "
+                 "much demand a keyword shows, not how many searches it gets - "
+                 "Google's autocomplete never reveals search volume."),
+    ("Reach", "How many different Google queries returned this phrase. The best "
+              "signal in the file: what many queries surface sits at the centre of "
+              "the topic."),
+    ("Relevance", "Google's own score for the suggestion. Higher is stronger."),
+    ("Level", "Which round found it. 0 came straight from the seed; higher numbers "
+              "are deeper in the tail."),
+    ("Best rank", "Its best position in Google's suggestion list. 1 is the top."),
+    ("Variants", "How many ways the same keyword was typed, merged into this one "
+                 "row. 1 means it was only seen one way."),
+    ("Intent", "What the searcher wants: reach a page (navigational), learn "
+               "something (informational), compare before buying (commercial), act "
+               "now (transactional), or simply the brand."),
 )
 
 

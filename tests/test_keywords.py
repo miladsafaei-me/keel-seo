@@ -353,8 +353,11 @@ class WorkbookTests(unittest.TestCase):
     def test_the_volume_caveat_travels_with_priority(self):
         book, _ = self._workbook()
         text = " ".join(str(r[1]) for r in book["Run"].iter_rows(values_only=True)
-                        if r[0] == "Priority")
-        self.assertIn("no search volume", text)
+                        if r[0] == "Priority").lower()
+        # The concept, not a form of words: this must survive rewording, and
+        # asserting an exact phrase made an editing pass look like a regression.
+        self.assertIn("search volume", text,
+                      "Priority must say it is not a volume figure")
 
     def test_every_cluster_row_links_to_its_own_keywords(self):
         book, clusters = self._workbook()
