@@ -190,24 +190,54 @@ def write_markdown(path: str, universe: Universe, clusters: list[Cluster],
         handle.write("\n".join(lines) + "\n")
 
 
+COLUMN_MEANINGS = (
+    ("Priority", "0-100, the one number to sort by. A weighted blend of the four "
+                 "columns below (reach 60%, relevance 20%, rank 10%, level 10%). "
+                 "It ranks the SHAPE of demand, never its size: autocomplete "
+                 "returns no search volume and no parameter exists that would "
+                 "make it. Validated against a paid volume export, it correlates "
+                 "+0.42 with real volume - enough to separate 'worth a page' from "
+                 "'tail', not enough to choose between two close candidates."),
+    ("Reach", "How many DIFFERENT queries independently returned this phrase. The "
+              "strongest signal in the file: on its own it correlates +0.44 with "
+              "real search volume, better than anything else here. A phrase 90 "
+              "separate queries all surfaced sits at the centre of the topic; one "
+              "that appeared once is incidental."),
+    ("Relevance", "Google's own score for the suggestion, highest seen. Roughly "
+                  "550-1250; values above 1000 are reserved for the one or two "
+                  "phrases it treats as near-exact matches. Correlates +0.18 with "
+                  "real volume."),
+    ("Level", "Which round found it. 0 = came straight from the seed itself, "
+              "1 = found by re-seeding a level-0 phrase, and so on. Lower is "
+              "closer to the head of the topic."),
+    ("Best rank", "Position in Google's suggestion list, best ever seen (1 = top). "
+                  "Google orders roughly by popularity, but on its own this is the "
+                  "weakest predictor here (+0.15), which is why it carries only "
+                  "10% of Priority."),
+    ("Intent", "What the searcher wants, decided from the words alone: "
+               "navigational (reach a thing), informational (know something), "
+               "commercial (compare before buying), transactional (act now), or "
+               "brand (the seed plus a bare noun, no modifier)."),
+)
+
+
 def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
                meta: dict) -> bool:
     """Write the workbook people actually work in. False if openpyxl is absent.
 
-    Four sheets rather than one, because a harvest gets read three different ways
-    and a single flat dump serves none of them well:
+    Four sheets, in the order they are used. **Run** comes first because it is
+    what a reader needs before trusting any number in the file: where the data
+    came from, how complete it is, and what each column means. **Clusters** is
+    the map - one row per topic, the unit a page is built against - and every row
+    links straight to its own keywords. **Keywords** is the working sheet, sorted
+    by priority within cluster, with a frozen header and an autofilter.
+    **Off-seed** is the contamination check.
 
-    * **Keywords** — every phrase in priority order, carrying its cluster and
-      intent, with a frozen header and an autofilter so it can be sorted and
-      sliced without setting anything up first. This is the working sheet.
-    * **Clusters** — one row per topic, which is the unit a page is built
-      against. Reading it off the Keywords sheet would mean scrolling 2,000 rows
-      to see 700 topics.
-    * **Run** — where the numbers came from: source, egress, counts, and the
-      volume caveat in full. A spreadsheet outlives the terminal it was produced
-      in, so the caveat has to travel inside the file rather than beside it.
-    * **Off-seed** — what Google returned that did *not* contain the seed, which
-      is how a term whose neighbours belong to another industry shows itself.
+    The Run sheet deliberately carries a short summary rather than every field in
+    the metadata: proxy statistics and internal counters belong in the JSON, and
+    a summary nobody reads is the same as no summary. The volume caveat is not a
+    row of its own either - it lives inside the explanation of Priority, which is
+    the number it applies to and the place a reader is actually looking.
 
     openpyxl is an optional dependency (`pip install 'keel-seo[xlsx]'`); the other
     three formats are stdlib and always written, so a missing library costs the
@@ -223,48 +253,99 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
     book = Workbook()
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill("solid", fgColor="1F3864")
+    title_font = Font(bold=True, size=12, color="1F3864")
+    link_font = Font(color="0563C1", underline="single")
 
-    def style_header(sheet, widths):
+    def style_header(sheet, widths, row=1):
         for index, width in enumerate(widths, 1):
             sheet.column_dimensions[get_column_letter(index)].width = width
-        for cell in sheet[1]:
+        for cell in sheet[row]:
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = Alignment(vertical="center")
-        sheet.freeze_panes = "A2"
-        sheet.auto_filter.ref = sheet.dimensions
 
-    keywords = book.active
-    keywords.title = "Keywords"
+    run = book.active
+    run.title = "Run"
+    clusters_sheet = book.create_sheet("Clusters")
+    keywords = book.create_sheet("Keywords")
+
     keywords.append(["Priority", "Keyword", "Cluster", "Cluster label", "Intent",
                      "Best rank", "Reach", "Relevance", "Level", "Words"])
+    # Remember where each cluster starts so the Clusters sheet can link to it.
+    first_row: dict[int, int] = {}
     for cluster in clusters:
+        first_row[cluster.index] = keywords.max_row + 1
         for phrase in cluster.members:
             keywords.append([round(phrase.priority, 1), phrase.text, cluster.index,
                              cluster.label, cluster.intent, phrase.best_rank,
                              phrase.reach, phrase.max_relevance, phrase.first_level,
                              phrase.words])
     style_header(keywords, [9, 52, 9, 30, 15, 11, 8, 11, 8, 8])
+    keywords.freeze_panes = "A2"
+    keywords.auto_filter.ref = keywords.dimensions
 
-    topics = book.create_sheet("Clusters")
-    topics.append(["Cluster", "Label", "Intent", "Phrases", "Priority", "Head phrase"])
+    clusters_sheet.append(["Cluster", "Label", "Intent", "Phrases", "Priority",
+                           "Head phrase", "Go to keywords"])
     for cluster in clusters:
-        topics.append([cluster.index, cluster.label, cluster.intent, cluster.size,
-                       round(cluster.priority, 1), cluster.head.text])
-    style_header(topics, [9, 32, 15, 10, 10, 52])
+        clusters_sheet.append([cluster.index, cluster.label, cluster.intent,
+                               cluster.size, round(cluster.priority, 1),
+                               cluster.head.text, "open ->"])
+        row = clusters_sheet.max_row
+        target = f"#Keywords!A{first_row[cluster.index]}"
+        # Both the number and the arrow are clickable, so the row works however
+        # the reader reaches for it.
+        for column in ("A", "G"):
+            cell = clusters_sheet[f"{column}{row}"]
+            cell.hyperlink = target
+            cell.font = link_font
+    style_header(clusters_sheet, [9, 32, 15, 10, 10, 52, 16])
+    clusters_sheet.freeze_panes = "A2"
+    clusters_sheet.auto_filter.ref = f"A1:F{clusters_sheet.max_row}"
 
-    run = book.create_sheet("Run")
-    run.append(["Field", "Value"])
-    for key in ("seed", "harvested_at", "source", "endpoint_client", "language",
-                "vertical", "egress_country", "egress_ip", "egress_org", "phrases",
-                "clusters", "queries_asked", "network_calls", "cache_hits", "errors",
-                "levels_run", "unexpanded_phrases", "exhausted", "stopped_by_rate_limit",
-                "elapsed_seconds", "off_seed_rejected"):
-        run.append([key, str(meta.get(key, ""))])
-    run.append(["volume_note", meta.get("volume_note", "")])
-    if meta.get("proxy_pool"):
-        run.append(["proxy_pool", str(meta["proxy_pool"])])
-    style_header(run, [26, 110])
+    complete = ("closed - nothing new was left to find" if meta.get("exhausted")
+                else "stopped at the time limit" if meta.get("stopped_by_time_limit")
+                else "stopped by a rate limit" if meta.get("stopped_by_rate_limit")
+                else "stopped at the level or query limit")
+    geography = (f"mixed across a rotating proxy pool"
+                 if meta.get("egress_country") == "mixed"
+                 else f"{meta.get('egress_country', '')} (the exit IP decides it)")
+
+    run.append(["Keyword universe", meta.get("seed", "")])
+    run["A1"].font = title_font
+    run["B1"].font = title_font
+    run.append([])
+    run.append(["Summary", ""])
+    summary_header = run.max_row
+    for label, value in (
+        ("Keywords found", f"{meta.get('phrases', 0):,}"),
+        ("Topic clusters", f"{meta.get('clusters', 0):,}"),
+        ("Harvested (UTC)", meta.get("harvested_at", "")),
+        ("Source", "Google autocomplete only"),
+        ("Market / geography", geography),
+        ("Language", meta.get("language", "")),
+        ("How it ended", complete),
+        ("Rounds completed", meta.get("levels_run", "")),
+        ("Phrases not yet expanded", f"{meta.get('unexpanded_phrases', 0):,}"),
+        ("Queries asked", f"{meta.get('queries_asked', 0):,}"),
+        ("Of those, served from cache", f"{meta.get('cache_hits', 0):,}"),
+        ("Time taken", f"{meta.get('elapsed_seconds', 0):,.0f}s"),
+    ):
+        run.append([label, str(value)])
+
+    run.append([])
+    run.append(["What the columns mean", ""])
+    meanings_header = run.max_row
+    for column, meaning in COLUMN_MEANINGS:
+        run.append([column, meaning])
+        run[f"A{run.max_row}"].font = Font(bold=True)
+        run[f"B{run.max_row}"].alignment = Alignment(wrap_text=True, vertical="top")
+
+    run.column_dimensions["A"].width = 28
+    run.column_dimensions["B"].width = 104
+    for header_row in (summary_header, meanings_header):
+        for cell in run[header_row]:
+            cell.font = header_font
+            cell.fill = header_fill
 
     contamination = sorted(universe.off_seed.items(), key=lambda kv: -kv[1])
     if contamination:
@@ -273,7 +354,9 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
         for phrase, count in contamination[:200]:
             off.append([count, phrase])
         style_header(off, [16, 60])
+        off.freeze_panes = "A2"
 
+    book.active = 0
     book.save(path)
     return True
 

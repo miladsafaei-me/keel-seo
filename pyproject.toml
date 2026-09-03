@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keel-seo"
-version = "0.21.1"
+version = "0.22.0"
 description = "Keel SEO — reusable Landing Registry, sitemap, noindex-by-default gate, intent registry, critical-CSS engine, a complete Google Search Console API client (Search Analytics, URL Inspection, Indexing, Sitemaps, Sites), and an autocomplete-only keyword-universe crawler with lexical clustering."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -269,6 +269,60 @@ class WorkbookTests(unittest.TestCase):
         score(u)
         return u
 
+    def _workbook(self):
+        import tempfile
+
+        from keel_seo.keywords import report
+
+        universe = self.universe()
+        clusters = clustering.build(universe)
+        meta = report.metadata(universe, clusters,
+                               {"ip": "", "country": "mixed", "org": "pool"},
+                               SuggestClient(cache=SuggestCache(None), rate=0))
+        tmp = tempfile.mkdtemp()
+        path = os.path.join(tmp, "wb.xlsx")
+        if not report.write_xlsx(path, universe, clusters, meta):
+            self.skipTest("openpyxl not installed")
+        import openpyxl
+
+        return openpyxl.load_workbook(path), clusters
+
+    def test_run_is_the_first_sheet(self):
+        book, _ = self._workbook()
+        self.assertEqual(book.sheetnames[0], "Run",
+                         "the reader needs provenance before any number")
+
+    def test_run_carries_a_summary_not_the_whole_metadata_dump(self):
+        book, _ = self._workbook()
+        labels = [r[0] for r in book["Run"].iter_rows(values_only=True)]
+        self.assertNotIn("volume_note", labels)
+        self.assertNotIn("proxy_pool", labels)
+        self.assertIn("Keywords found", labels)
+        self.assertIn("How it ended", labels)
+
+    def test_run_explains_every_scored_column(self):
+        book, _ = self._workbook()
+        labels = {r[0] for r in book["Run"].iter_rows(values_only=True)}
+        for column in ("Priority", "Reach", "Relevance", "Level", "Best rank"):
+            self.assertIn(column, labels, f"{column} is unexplained")
+
+    def test_the_volume_caveat_travels_with_priority(self):
+        book, _ = self._workbook()
+        text = " ".join(str(r[1]) for r in book["Run"].iter_rows(values_only=True)
+                        if r[0] == "Priority")
+        self.assertIn("no search volume", text)
+
+    def test_every_cluster_row_links_to_its_own_keywords(self):
+        book, clusters = self._workbook()
+        sheet, keywords = book["Clusters"], book["Keywords"]
+        for row in range(2, sheet.max_row + 1):
+            link = sheet[f"A{row}"].hyperlink
+            self.assertIsNotNone(link, f"cluster row {row} is not clickable")
+            self.assertTrue(link.target.startswith("#Keywords!A"))
+            # The link must land on a row that really belongs to that cluster.
+            target_row = int(link.target.split("A")[-1])
+            self.assertEqual(keywords[f"C{target_row}"].value, sheet[f"A{row}"].value)
+
     def test_the_other_three_formats_survive_a_missing_openpyxl(self):
         import builtins
         import tempfile
