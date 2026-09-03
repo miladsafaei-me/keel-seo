@@ -337,6 +337,13 @@ class WorkbookTests(unittest.TestCase):
         self.assertIn("Keywords found", labels)
         self.assertIn("How it ended", labels)
 
+    def test_the_summary_count_matches_the_keywords_sheet(self):
+        """A Run sheet that disagrees with the sheet beside it is worse than none."""
+        book, _ = self._workbook()
+        rows = {r[0]: r[1] for r in book["Run"].iter_rows(values_only=True)}
+        self.assertEqual(rows["Keywords found"].replace(",", ""),
+                         str(book["Keywords"].max_row - 1))
+
     def test_run_explains_every_scored_column(self):
         book, _ = self._workbook()
         labels = {r[0] for r in book["Run"].iter_rows(values_only=True)}

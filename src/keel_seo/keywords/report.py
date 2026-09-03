@@ -26,6 +26,11 @@ CONTAMINATION_SAMPLE = 40
 def metadata(universe: Universe, clusters: list[Cluster], egress: dict,
              client) -> dict:
     pool = getattr(client, "pool", None)
+    # Clustering collapses word-order variants and plurals, so the number of
+    # KEYWORDS is smaller than the number of raw phrases returned. Reporting the
+    # raw count next to a sheet holding the collapsed one is a contradiction the
+    # reader has to resolve, so both are named and the difference is stated.
+    keywords = sum(len(c.members) for c in clusters)
     return {
         "seed": universe.seed,
         "harvested_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -37,6 +42,8 @@ def metadata(universe: Universe, clusters: list[Cluster], egress: dict,
         "egress_country": egress.get("country", "unknown"),
         "egress_org": egress.get("org", ""),
         "phrases": len(universe.phrases),
+        "keywords": keywords,
+        "variants_collapsed": len(universe.phrases) - keywords,
         "clusters": len(clusters),
         "queries_asked": universe.queries_asked,
         "network_calls": universe.network_calls,
@@ -114,8 +121,11 @@ def write_markdown(path: str, universe: Universe, clusters: list[Cluster],
             "the harvest actually reflects.")
     add("")
     add(f"**Harvested:** {meta['harvested_at']} · "
-        f"**{meta['phrases']:,} phrases** in **{meta['clusters']} clusters** from "
-        f"{meta['queries_asked']:,} queries in {meta['elapsed_seconds']}s.")
+        f"**{meta.get('keywords', meta['phrases']):,} keywords** in "
+        f"**{meta['clusters']} clusters** from {meta['queries_asked']:,} queries in "
+        f"{meta['elapsed_seconds']}s"
+        + (f" ({meta['variants_collapsed']:,} re-worded duplicates collapsed)."
+           if meta.get("variants_collapsed") else "."))
     add("")
     add("> Autocomplete returns no search volume, and no parameter exists that "
         "would make it. `priority` below ranks demand *shape* — Google's own "
@@ -322,7 +332,9 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
     run.append(["Summary", ""])
     summary_header = run.max_row
     for label, value in (
-        ("Keywords found", f"{meta.get('phrases', 0):,}"),
+        ("Keywords found", f"{meta.get('keywords', meta.get('phrases', 0)):,}"),
+        ("Phrases Google returned", f"{meta.get('phrases', 0):,}"),
+        ("Collapsed as re-worded duplicates", f"{meta.get('variants_collapsed', 0):,}"),
         ("Topic clusters", f"{meta.get('clusters', 0):,}"),
         ("Harvested (UTC)", meta.get("harvested_at", "")),
         ("Source", "Google autocomplete only"),
