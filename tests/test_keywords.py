@@ -11,6 +11,7 @@ import os
 import unittest
 
 from keel_seo.keywords import cluster as clustering
+from keel_seo.keywords import language
 from keel_seo.keywords.crawl import Universe, contains_seed, crawl, score, seed_tokens
 from keel_seo.keywords.grammar import (BRANCH, DRILL, SEED, expansions,
                                        star_variants)
@@ -453,6 +454,45 @@ class WorkbookTests(unittest.TestCase):
                 self.assertIn(kind, paths)
                 self.assertTrue(os.path.getsize(paths[kind]) > 0,
                                 f"{kind} must still be written")
+
+
+class LanguageTests(unittest.TestCase):
+    """Three tiers of certainty, and the false positives that shaped tier three."""
+
+    def test_a_non_latin_script_is_certain(self):
+        self.assertEqual(language.non_english_reason("quotex telegram отзывы"),
+                         language.SCRIPT)
+        self.assertEqual(language.non_english_reason("quotex 日本"), language.SCRIPT)
+
+    def test_accented_letters_are_near_certain(self):
+        self.assertEqual(language.non_english_reason("quotex app móvil"),
+                         language.DIACRITIC)
+        self.assertEqual(language.non_english_reason("quotex binäre option"),
+                         language.DIACRITIC)
+
+    def test_a_marker_word_names_itself_so_the_call_can_be_checked(self):
+        reason = language.non_english_reason("descargar quotex apk")
+        self.assertTrue(reason.startswith(language.VOCABULARY))
+        self.assertIn("descargar", reason)
+
+    def test_plain_english_is_left_alone(self):
+        for text in ("quotex demo account", "quotex app download apk",
+                     "is quotex legit", "quotex withdrawal problem"):
+            self.assertEqual(language.non_english_reason(text), "", text)
+
+    def test_the_two_false_positives_that_shaped_the_marker_list(self):
+        """A domain part and a crypto term, both flagged by earlier drafts."""
+        self.assertEqual(language.non_english_reason("quotex com login"), "",
+                         "'com' is a domain, not Portuguese")
+        self.assertEqual(language.non_english_reason("quotex dao download"), "",
+                         "'dao' here is the crypto sense, not Vietnamese")
+
+    def test_no_marker_is_itself_an_ordinary_english_word(self):
+        english = {"app", "com", "download", "demo", "login", "free", "best",
+                   "account", "bot", "signal", "trading", "broker", "review",
+                   "legal", "safe", "real", "code", "bonus", "dao", "para"}
+        self.assertEqual(language.MARKER_WORDS & english, set(),
+                         "a marker that is also English costs more than it finds")
 
 
 class ProxySeamTests(unittest.TestCase):

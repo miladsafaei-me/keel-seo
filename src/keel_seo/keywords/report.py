@@ -19,6 +19,7 @@ import os
 
 from .cluster import Cluster
 from .crawl import Universe
+from .language import non_english_reason
 
 CONTAMINATION_SAMPLE = 40
 
@@ -31,6 +32,8 @@ def metadata(universe: Universe, clusters: list[Cluster], egress: dict,
     # raw count next to a sheet holding the collapsed one is a contradiction the
     # reader has to resolve, so both are named and the difference is stated.
     keywords = sum(len(c.members) for c in clusters)
+    foreign = sum(1 for c in clusters for p in c.members
+                  if non_english_reason(p.text))
     return {
         "seed": universe.seed,
         "harvested_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -44,6 +47,8 @@ def metadata(universe: Universe, clusters: list[Cluster], egress: dict,
         "phrases": len(universe.phrases),
         "keywords": keywords,
         "variants_collapsed": len(universe.phrases) - keywords,
+        "non_english": foreign,
+        "non_english_share": round(100 * foreign / keywords, 1) if keywords else 0.0,
         "clusters": len(clusters),
         "queries_asked": universe.queries_asked,
         "network_calls": universe.network_calls,
@@ -222,6 +227,10 @@ COLUMN_MEANINGS = (
                 "collected before countries were recorded."),
     ("Variants", "How many ways the same keyword was typed, merged into this one "
                  "row. 1 means it was only seen one way."),
+    ("Non-English", "Keywords that are not in English, on their own sheet with the "
+                    "reason each was flagged. Script and accented letters are "
+                    "certain; a flagged word is a judgement you can check, since "
+                    "the word itself is shown."),
     ("Intent", "What the searcher wants: reach a page (navigational), learn "
                "something (informational), compare before buying (commercial), act "
                "now (transactional), or simply the brand."),
@@ -336,6 +345,9 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
         ("Phrases Google returned", f"{meta.get('phrases', 0):,}"),
         ("Collapsed as re-worded duplicates", f"{meta.get('variants_collapsed', 0):,}"),
         ("Topic clusters", f"{meta.get('clusters', 0):,}"),
+        ("Non-English keywords",
+         f"{meta.get('non_english', 0):,} ({meta.get('non_english_share', 0):.1f}% "
+         "— listed on their own sheet)"),
         ("Harvested (UTC)", meta.get("harvested_at", "")),
         ("Source", "Google autocomplete only"),
         ("Market / geography", geography),
@@ -363,6 +375,20 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
         for cell in run[header_row]:
             cell.font = header_font
             cell.fill = header_fill
+
+    foreign = [(p, cluster, non_english_reason(p.text))
+               for cluster in clusters for p in cluster.members
+               if non_english_reason(p.text)]
+    if foreign:
+        sheet = book.create_sheet("Non-English")
+        sheet.append(["Priority", "Keyword", "Country", "Why", "Cluster label",
+                      "Intent", "Reach"])
+        for phrase, cluster, reason in sorted(foreign, key=lambda f: -f[0].priority):
+            sheet.append([round(phrase.priority, 1), phrase.text, phrase.country,
+                          reason, cluster.label, cluster.intent, phrase.reach])
+        style_header(sheet, [9, 52, 9, 30, 26, 15, 8])
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
 
     contamination = sorted(universe.off_seed.items(), key=lambda kv: -kv[1])
     if contamination:
