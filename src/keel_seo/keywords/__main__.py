@@ -45,10 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="drill rounds under each truncated response (default 1)")
     parser.add_argument("--frontier", type=int, default=300,
                         help="phrases re-seeded per level (default 300)")
-    parser.add_argument("--threshold", type=float, default=clustering.DEFAULT_THRESHOLD,
-                        help=("cluster similarity cut, 0-1 "
-                              f"(default {clustering.DEFAULT_THRESHOLD}, tuned on a "
-                              "4,273-phrase harvest)"))
+    parser.add_argument("--topics", type=int, default=clustering.DEFAULT_TOPICS,
+                        help=(f"how many topics to name (default "
+                              f"{clustering.DEFAULT_TOPICS}). Keywords matching none "
+                              "of them go to an explicit long-tail group rather than "
+                              "the nearest topic"))
     parser.add_argument("--workers", type=int, default=0,
                         help=("concurrent requests. 0 (default) picks for you: 5 when "
                               "asking directly, or one per proxy (capped at 120) when "
@@ -188,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     progress(f"clustering {len(universe.phrases)} phrases ...")
-    clusters = clustering.build(universe, threshold=args.threshold)
+    clusters = clustering.build(universe, topics=args.topics)
     meta = metadata(universe, clusters, egress, client)
     paths = write_all(args.out, universe, clusters, meta)
 

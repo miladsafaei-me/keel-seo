@@ -254,6 +254,43 @@ class RateLimitTests(unittest.TestCase):
                         "a blocked crawl must stop, not spend the whole budget")
 
 
+class CommandLineTests(unittest.TestCase):
+    """The CLI is a code path too, and it broke while every other test passed.
+
+    Removing cluster.DEFAULT_THRESHOLD left __main__ referencing it, which no test
+    caught because they all call build() directly. The harvest died on the server
+    with AttributeError after a clean local run.
+    """
+
+    def test_the_parser_builds_and_its_defaults_resolve(self):
+        from keel_seo.keywords.__main__ import build_parser
+
+        args = build_parser().parse_args(["quotex"])
+        self.assertEqual(args.topics, clustering.DEFAULT_TOPICS)
+        self.assertEqual(args.seed, "quotex")
+
+    def test_every_clustering_option_the_cli_offers_is_accepted_by_build(self):
+        import inspect
+
+        from keel_seo.keywords.__main__ import build_parser
+
+        args = build_parser().parse_args(["quotex", "--topics", "12"])
+        accepted = inspect.signature(clustering.build).parameters
+        self.assertIn("topics", accepted,
+                      "the CLI passes --topics; build() must take it")
+        universe = Universe(seed="quotex")
+        from keel_seo.keywords.crawl import Phrase
+
+        for text in ("quotex demo one", "quotex demo two", "quotex demo three"):
+            universe.phrases[text] = Phrase(text, 1, 600, 0)
+        score(universe)
+        clustering.build(universe, topics=args.topics)   # must not raise
+
+    def test_names_the_cli_reads_off_the_clustering_module_exist(self):
+        for name in ("DEFAULT_TOPICS", "TAIL_LABEL", "build"):
+            self.assertTrue(hasattr(clustering, name), f"cluster.{name} is gone")
+
+
 class WorkbookTests(unittest.TestCase):
     """The .xlsx is optional, and its absence must cost only the workbook."""
 
