@@ -11,6 +11,13 @@ failed seed must not be retried in the same pass, and that the output has to be
 written per seed rather than at the end of the walk. A project's `ops/` keeps
 only what is genuinely its own: which seeds it cares about, and where they land.
 
+**A seed line may name its own spellings.** ``binary option | binary options`` is
+one seed, crawled once, written to one spreadsheet with both spellings evidenced
+per keyword. Spellings are a property of the seed rather than of the run, so they
+live in the seed list beside it; until they did, a spelling group had to be run as
+a hand-written CLI call outside the walk, which put a project's real seeds
+somewhere other than its seed file.
+
 **One-shot, not scheduled.** A seed's keyword universe is a property of the
 language, not of the day: what people type into a search box does not move week
 to week, so this runs when someone wants a seed harvested and then stops. It was
@@ -31,6 +38,7 @@ import os
 import subprocess
 import sys
 import time
+from typing import NamedTuple
 
 from .proxying import DirectEgressRefused, require_pooled_egress
 from .report import slugify
@@ -46,14 +54,58 @@ def stamp() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def read_seeds(path: str) -> list[str]:
-    """One seed per line; blank lines and ``#`` comments ignored."""
-    seeds: list[str] = []
+class Seed(NamedTuple):
+    """One line of the seed list: a term, and the other spellings of that term.
+
+    The spellings belong to the seed and not to the walk, because they change
+    what is crawled for one seed rather than for all of them: ``binary option``
+    wants ``binary options`` and nothing else in the same list does. Handing them
+    over through ``--extra`` would give every seed the same list, which is how a
+    walk ends up crawling ``olymptrade`` as a spelling of ``alpari``.
+    """
+
+    term: str
+    variants: tuple[str, ...] = ()
+
+
+def read_seeds(path: str) -> list[Seed]:
+    """One seed per line; blank lines and ``#`` comments ignored.
+
+    A line may name the seed's other spellings after a ``|``, comma-separated::
+
+        binary option | binary options
+        trading bot   | trade bot, trading robot, trade robot
+        alpari
+
+    Those spellings are crawled as part of the same seed and land in **one**
+    universe -- one row per keyword, with the other spellings named in the *Also
+    written* column -- because they are one demand, and one spreadsheet is what
+    anyone reading the results wants. Without this the only way to say it was a
+    separate CLI call per group, outside the walk and outside the seed list, so
+    the file that is supposed to hold a project's seeds did not hold them.
+
+    The output filename comes from the term alone, so adding a spelling to a line
+    never orphans the output already on disk -- but it does mean the finished
+    universe no longer matches the line, and ``--refresh`` is what re-earns it.
+    """
+    seeds: list[Seed] = []
     with open(path, encoding="utf-8") as handle:
         for line in handle:
-            seed = line.split("#", 1)[0].strip()
-            if seed:
-                seeds.append(seed)
+            entry = line.split("#", 1)[0].strip()
+            if not entry:
+                continue
+            term, _, spellings = entry.partition("|")
+            term = term.strip()
+            if not term:
+                continue
+            # dict.fromkeys de-duplicates while keeping the written order, and a
+            # spelling identical to the term is dropped: the crawler would drop
+            # it too, but a walk that logs "also written: alpari" for the seed
+            # alpari reads like a bug in the list rather than a no-op.
+            variants = tuple(dict.fromkeys(
+                part for part in (piece.strip() for piece in spellings.split(","))
+                if part and part.casefold() != term.casefold()))
+            seeds.append(Seed(term, variants))
     return seeds
 
 
@@ -126,32 +178,37 @@ def main(argv: list[str] | None = None) -> int:
 
     done = skipped = failed = 0
     for seed in seeds:
-        if not args.refresh and already_harvested(args.out, seed):
-            log(f"skipping {seed!r} — already harvested (use --refresh to redo)")
+        if not args.refresh and already_harvested(args.out, seed.term):
+            log(f"skipping {seed.term!r} — already harvested (use --refresh to redo)")
             skipped += 1
             continue
-        command = [sys.executable, "-m", "keel_seo.keywords", seed,
+        command = [sys.executable, "-m", "keel_seo.keywords", seed.term,
                    "--out", args.out,
                    "--levels", str(args.levels), "--max-seconds", str(args.seconds),
                    "--proxies", args.proxies]
         if args.markets is not None:
             command.extend(["--markets", args.markets])
+        if seed.variants:
+            command.extend(["--variants", ",".join(seed.variants)])
+        # --extra last, so a run can still override anything above it: argparse
+        # takes the final occurrence of a flag.
         if args.extra:
             command.extend(args.extra.split())
-        log(f"harvesting {seed!r}")
+        also = f" (also written: {', '.join(seed.variants)})" if seed.variants else ""
+        log(f"harvesting {seed.term!r}{also}")
         started = time.time()
         # The crawler's own stderr is the progress narration; let it through.
         result = subprocess.run(command)
         took = int(time.time() - started)
         if result.returncode == 0:
             done += 1
-            log(f"done {seed!r} in {took}s")
+            log(f"done {seed.term!r} in {took}s")
         else:
             # Left for a later invocation rather than retried here: the usual
             # cause is that no proxy answered today, and asking again inside the
             # same walk changes nothing while spending the addresses that did.
             failed += 1
-            log(f"FAILED {seed!r} after {took}s (exit {result.returncode}); the "
+            log(f"FAILED {seed.term!r} after {took}s (exit {result.returncode}); the "
                 "response cache keeps its progress for the next run")
 
     log(f"walk complete — {done} harvested, {skipped} already had output, "

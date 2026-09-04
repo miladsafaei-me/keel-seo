@@ -908,6 +908,26 @@ external `timeout`, which lands between levels and writes nothing), and **skips
 any seed whose output is already on disk** — so a list that is nine-tenths done
 costs nine-tenths of nothing. `--refresh` re-harvests anyway.
 
+**A seed line may name its own other spellings**, after a `|` and separated by
+commas:
+
+```
+# seeds.txt
+binary option | binary options
+olymp trade   | olymptrade
+trading bot   | trade bot, trading robot, trade robot
+alpari
+```
+
+Each line is one seed, one crawl and one spreadsheet, with every spelling
+evidenced per keyword in the *Also written* column — which is what anyone reading
+the results wants, and what `--variants` already did for a single-seed run.
+Spellings belong to the seed rather than to the walk: `--extra "--variants ..."`
+would hand the same list to every line, so `olymptrade` would be crawled as a
+spelling of `alpari` too. The output filename still comes from the term alone, so
+adding a spelling to a line never orphans the file already on disk — it does mean
+that file now predates the line, and `--refresh` is what re-earns it.
+
 **It is deliberately not scheduled.** A seed's keyword universe is a property of
 the language, not of the day; it was briefly on a weekly timer, which would have
 re-paid for unchanged universes every Sunday and, because the cache makes a
@@ -942,4 +962,6 @@ seed's other spellings in one file and one cluster, asks the project's sixteen
 target markets each in the language it searches in, and names every keyword's
 language in its own column. v0.30.0 stops paying for markets that only echo the
 primary one: each is sampled with sixty queries first, and on the measured
-distribution seven of sixteen earn a full crawl.
+distribution seven of sixteen earn a full crawl. v0.30.4 lets a seed line name its
+own other spellings — `binary option | binary options` — so a spelling group is
+part of the seed list rather than a hand-written CLI call outside the walk.

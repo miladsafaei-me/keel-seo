@@ -10,6 +10,7 @@ Run: DJANGO_SETTINGS_MODULE=tests.settings python -m django test tests.test_keyw
 import os
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from keel_seo.keywords import cluster as clustering
@@ -762,7 +763,67 @@ class TheHarvestWalker(unittest.TestCase):
             path = os.path.join(tmp, "seeds.txt")
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write("# a comment\n\nquotex\n  pocket option  # inline\n\n")
-            self.assertEqual(harvest.read_seeds(path), ["quotex", "pocket option"])
+            self.assertEqual(harvest.read_seeds(path),
+                             [harvest.Seed("quotex"), harvest.Seed("pocket option")])
+
+    def test_a_seed_line_names_its_own_other_spellings(self):
+        """`binary option | binary options` is one seed and one spreadsheet.
+
+        Before this the only way to crawl a spelling group was a hand-written CLI
+        call outside the walk, so a project's real seeds lived somewhere other
+        than its seed file.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "seeds.txt")
+            Path(path).write_text(
+                "binary option | binary options\n"
+                "trading bot|trade bot, trading robot , trade robot\n"
+                "alpari\n"
+                "olymp trade |  # nothing after the pipe\n"
+                "quotex | quotex, QUOTEX, quotex\n",
+                encoding="utf-8")
+            self.assertEqual(harvest.read_seeds(path), [
+                harvest.Seed("binary option", ("binary options",)),
+                harvest.Seed("trading bot",
+                             ("trade bot", "trading robot", "trade robot")),
+                harvest.Seed("alpari", ()),
+                harvest.Seed("olymp trade", ()),
+                harvest.Seed("quotex", ()),
+            ])
+
+    def test_a_spelling_group_writes_where_its_term_alone_would_have(self):
+        """Or every line that gains a spelling orphans the output it already has."""
+        with tempfile.TemporaryDirectory() as tmp:
+            for kind in ("json", "md"):
+                Path(tmp, "binary-option.{}".format(kind)).write_text(
+                    "{}", encoding="utf-8")
+            seed = harvest.Seed("binary option", ("binary options",))
+            self.assertTrue(harvest.already_harvested(tmp, seed.term))
+
+    def test_each_seed_is_handed_only_its_own_spellings(self):
+        """One --variants list shared by every seed is how `olymptrade` becomes
+        a spelling of `alpari`; that is what `--extra` would have done."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "seeds.txt")
+            Path(path).write_text("binary option | binary options\nalpari\n",
+                                  encoding="utf-8")
+            calls = []
+
+            class Ran:
+                returncode = 0
+
+            def record(command, *args, **kwargs):
+                calls.append(command)
+                return Ran()
+
+            with unittest.mock.patch.object(harvest.subprocess, "run", record):
+                code = harvest.main(["--seeds", path, "--out", os.path.join(tmp, "out")])
+            self.assertEqual(code, 0)
+            self.assertEqual(len(calls), 2)
+            self.assertIn("--variants", calls[0])
+            self.assertEqual(calls[0][calls[0].index("--variants") + 1],
+                             "binary options")
+            self.assertNotIn("--variants", calls[1])
 
     def test_a_seed_with_output_on_disk_is_considered_done(self):
         with tempfile.TemporaryDirectory() as tmp:
