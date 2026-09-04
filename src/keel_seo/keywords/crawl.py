@@ -66,6 +66,40 @@ MIN_VARIANT_USES = 3
 # vanity: each one costs a full seed tier, and the tail is misspellings.
 DEFAULT_MAX_VARIANTS = 2
 
+# How many queries a market is asked before the run decides whether to crawl it.
+# Sixty is about a sixth of the seed tier and roughly a thousandth of a full
+# market crawl, which is what makes the question worth asking at all: the probe
+# for all fifteen secondary markets costs less than 2% of crawling one of them.
+PROBE_QUERIES = 60
+
+# What a market has to show, in the probe, to earn a full crawl: this share of
+# its answers unseen in the primary market's answers to the SAME queries, and at
+# least this many of them. Both conditions, because either alone lies. A market
+# returning four phrases, all new, is 100% novel and worth nothing; a market
+# returning six hundred phrases with 3% new is busy agreeing with the primary
+# market in a different accent.
+#
+# The share was measured, not guessed, and the guess it replaced was 0.25 - which
+# would have thrown away Germany, France and Spain. Probing all fifteen secondary
+# target markets against a US primary (seed `fundingpips`, 60 queries each,
+# 2026-09-04) produced two clearly separated groups:
+#
+#     ES 42%  ID 40%  AR 40%  DE 32%  FR 30%  PT 29%  BR 29%   <- kept
+#     IN 17%  NG 12%  KE 12%  PK 11%  CA 5%  ZA 5%  PH 5%  MY 5% <- set aside
+#
+# Nothing lands between 17% and 29%, and the gap is not an accident of this seed:
+# it is the line between markets asked in another language and markets asked in
+# English, which is a structural cause and should hold for any seed. 0.22 sits in
+# the middle of that gap with five points of margin on each side. India is the
+# closest call at 17%, and the one to re-examine if a seed's own numbers move.
+PROBE_NOVELTY_SHARE = 0.22
+
+# A guard against the degenerate case rather than a second threshold: with the
+# default 60-query probe every market that passed the share test returned at
+# least 102 unseen phrases, so this only ever fires on a probe too small to
+# conclude anything from.
+PROBE_NOVELTY_FLOOR = 15
+
 
 def normalize(text: str) -> str:
     return " ".join(text.lower().split())
@@ -303,6 +337,84 @@ def merge_markets(seed: str, per_market: dict) -> Universe:
     merged.exhausted = bool(per_market) and all(
         u.exhausted for u in per_market.values())
     return merged
+
+
+def probe_market(seed: str, client: SuggestClient, reference,
+                 *, queries: int = PROBE_QUERIES, tight: bool = True,
+                 wildcards: bool = False,
+                 variants: tuple[str, ...] = ()) -> tuple[Universe, dict]:
+    """Ask a market a sample of the seed tier, and measure how much of it is new.
+
+    The question a probe answers is the only one worth asking before spending a
+    market's crawl: **does this country search differently from the primary
+    one?** Not "does it return results" — every market returns results, mostly
+    the same ones.
+
+    `reference` is what the primary market answered **to these same queries**,
+    not its whole universe, and that distinction is the difference between a
+    stable threshold and a moving one. Measured against a finished universe, a
+    market's novelty falls as the primary is crawled deeper — the same market
+    scores 29% against a level-0 primary and less against a level-2 one — so any
+    threshold would silently mean something different at each `--levels`. Same
+    questions, same sample size, both sides: the comparison is then between
+    markets and nothing else.
+
+    The sample is a stride through the seed tier rather than its first N, so all
+    six attachment families are represented; taking the front of the list would
+    ask nothing but ``a``-``z`` suffixes and measure one corner of the space. The
+    same stride is used in every market, so the comparison is between markets and
+    not between query sets.
+
+    The phrases it collects are kept and returned. A probe is real data paid for
+    in real requests, and throwing it away because the market did not earn a full
+    crawl would be the second waste after the one this function exists to end.
+    """
+    tokens = seed_tokens(seed)
+    plan: list[str] = []
+    for term in [normalize(seed)] + [normalize(v) for v in variants]:
+        plan.extend(expansions(term, SEED, tight=tight, wildcards=wildcards))
+    stride = max(1, len(plan) // max(1, queries))
+    sample = plan[::stride][:queries]
+
+    universe = Universe(seed=seed, variants=tuple(variants))
+    for response in client.fetch_many(sample):
+        if response.error:
+            universe.errors += 1
+            continue
+        for suggestion in response.suggestions:
+            text = normalize(suggestion.phrase)
+            if not contains_seed(text, tokens):
+                universe.off_seed[text] = universe.off_seed.get(text, 0) + 1
+                continue
+            phrase = universe.phrases.get(text)
+            if phrase is None:
+                universe.phrases[text] = Phrase(text, suggestion.rank,
+                                                suggestion.relevance, 0)
+            else:
+                phrase.best_rank = min(phrase.best_rank, suggestion.rank)
+                phrase.max_relevance = max(phrase.max_relevance,
+                                           suggestion.relevance)
+            universe.phrases[text].parents.add(response.query)
+    universe.queries_asked = len(sample)
+    universe.levels_run = 1
+    score(universe)
+
+    known = set(reference)
+    fresh = [text for text in universe.phrases if text not in known]
+    returned = len(universe.phrases)
+    verdict = {
+        "queries": len(sample),
+        "phrases": returned,
+        "new": len(fresh),
+        "novelty": round(len(fresh) / returned, 3) if returned else 0.0,
+    }
+    return universe, verdict
+
+
+def worth_crawling(verdict: dict, *, share: float = PROBE_NOVELTY_SHARE,
+                   floor: int = PROBE_NOVELTY_FLOOR) -> bool:
+    """Whether a probed market earned its full crawl. Both tests, never either."""
+    return verdict["new"] >= floor and verdict["novelty"] >= share
 
 
 def crawl(

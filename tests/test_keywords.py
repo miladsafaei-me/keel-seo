@@ -16,9 +16,12 @@ from keel_seo.keywords import cluster as clustering
 from keel_seo.keywords import harvest, report, sync
 from keel_seo.keywords import language
 from keel_seo.keywords import markets as target_markets
-from keel_seo.keywords.crawl import (Phrase, Universe, contains_seed, crawl,
-                                     discover_variants, merge_markets, score,
-                                     seed_spelling, seed_tokens, squash)
+from keel_seo.keywords.crawl import (PROBE_NOVELTY_FLOOR, PROBE_NOVELTY_SHARE,
+                                     PROBE_QUERIES, Phrase, Universe,
+                                     contains_seed, crawl, discover_variants,
+                                     merge_markets, probe_market, score,
+                                     seed_spelling, seed_tokens, squash,
+                                     worth_crawling)
 from keel_seo.keywords.grammar import (BRANCH, DRILL, SEED, expansions,
                                        star_variants)
 from keel_seo.keywords.proxying import (DIRECT_REFUSAL, DirectEgressRefused,
@@ -900,6 +903,103 @@ class OneSeedManySpellings(unittest.TestCase):
 
         merged = merge_markets("fundingpips", {"US": us, "DE": de})
         self.assertEqual(sorted(merged.variants), ["funding pips", "funding-pips"])
+
+
+class ProbingBeforeBuying(unittest.TestCase):
+    """A market is sampled before it is crawled, and most of them are set aside.
+
+    Sixteen markets is sixteen crawls, and most secondary markets return the
+    primary market's own answers in a different accent. The probe asks each one a
+    sixtieth of a seed tier and keeps only the markets that answer differently.
+    """
+
+    def test_a_market_that_echoes_the_primary_is_set_aside(self):
+        shared = [f"ftmo topic {n}" for n in range(12)]
+        client = _AlwaysAnswers(shared)
+        _, verdict = probe_market("ftmo", client, set(shared), queries=10)
+        self.assertEqual(verdict["new"], 0)
+        self.assertEqual(verdict["novelty"], 0.0)
+        self.assertFalse(worth_crawling(verdict))
+
+    def test_a_market_that_answers_differently_earns_its_crawl(self):
+        local = [f"ftmo erfahrungen {n}" for n in range(40)]
+        client = _AlwaysAnswers(local)
+        universe, verdict = probe_market("ftmo", client, {"ftmo review"}, queries=10)
+        self.assertEqual(verdict["new"], 40)
+        self.assertEqual(verdict["novelty"], 1.0)
+        self.assertTrue(worth_crawling(verdict))
+        self.assertEqual(len(universe.phrases), 40,
+                         "the probe's own findings are kept, not thrown away")
+
+    def test_the_threshold_separates_the_markets_it_was_measured_on(self):
+        """The measured distribution, kept where a future edit has to face it.
+
+        Probing all fifteen secondary target markets against a US primary (seed
+        `fundingpips`, 60 queries each, 2026-09-04). The two groups are the
+        markets asked in another language and the markets asked in English, and
+        nothing lands between 17% and 29%.
+        """
+        measured = {
+            "ES": 0.42, "ID": 0.40, "AR": 0.40, "DE": 0.32, "FR": 0.30,
+            "PT": 0.29, "BR": 0.29,
+            "IN": 0.17, "NG": 0.12, "KE": 0.12, "PK": 0.11,
+            "CA": 0.05, "ZA": 0.05, "PH": 0.05, "MY": 0.05,
+        }
+        different = {"ES", "ID", "AR", "DE", "FR", "PT", "BR"}
+        for code, novelty in measured.items():
+            verdict = {"new": 100, "novelty": novelty}
+            self.assertEqual(worth_crawling(verdict), code in different,
+                             f"{code} at {novelty:.0%} falls on the wrong side")
+
+    def test_both_tests_must_pass_not_either(self):
+        # All new, but four phrases: 100% of nothing.
+        self.assertFalse(worth_crawling({"new": 4, "novelty": 1.0}))
+        # Plenty new, but a rounding error of the whole: busy agreeing.
+        self.assertFalse(worth_crawling({"new": 30, "novelty": 0.03}))
+        self.assertTrue(worth_crawling({"new": 30, "novelty": 0.4}))
+
+    def test_the_sample_spans_the_attachment_families(self):
+        """Taking the first N would ask nothing but a-z suffixes."""
+        client = _AlwaysAnswers([])
+        probe_market("quotex", client, set(), queries=60)
+        asked = client.asked
+        self.assertEqual(len(asked), 60)
+        self.assertTrue(any(q.startswith("quotex ") for q in asked), "no suffix sweep")
+        self.assertTrue(any(q.endswith(" quotex") for q in asked), "no prefix sweep")
+        self.assertTrue(any(q.startswith("quotex") and " " not in q for q in asked),
+                        "no tight sweep")
+
+    def test_a_probe_asks_a_thousandth_of_what_a_crawl_would(self):
+        """The number that makes the question worth asking at all."""
+        seed_tier = len(expansions("quotex", SEED))
+        self.assertLess(PROBE_QUERIES, seed_tier / 5)
+
+    def test_the_cli_offers_the_knobs_and_defaults_to_probing(self):
+        from keel_seo.keywords.__main__ import build_parser
+
+        args = build_parser().parse_args(["quotex"])
+        self.assertEqual(args.probe, PROBE_QUERIES)
+        self.assertEqual(args.probe_share, PROBE_NOVELTY_SHARE)
+        self.assertEqual(args.probe_floor, PROBE_NOVELTY_FLOOR)
+        self.assertEqual(args.primary, "", "the primary defaults to the list head")
+
+
+class _AlwaysAnswers(SuggestClient):
+    """Answers every query with the same phrases, and remembers what was asked."""
+
+    def __init__(self, phrases):
+        super().__init__(cache=SuggestCache(None))
+        self.phrases = list(phrases)
+        self.asked: list[str] = []
+
+    def fetch(self, query):
+        self.asked.append(query)
+        return Response(
+            query=query,
+            suggestions=tuple(Suggestion(p, i, 600 - i)
+                              for i, p in enumerate(self.phrases, 1)),
+            capacity=15,
+        )
 
 
 class TheTargetMarkets(unittest.TestCase):

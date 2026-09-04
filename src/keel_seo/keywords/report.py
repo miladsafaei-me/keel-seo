@@ -27,7 +27,7 @@ CONTAMINATION_SAMPLE = 40
 
 
 def metadata(universe: Universe, clusters: list[Cluster], egress: dict,
-             client, asked_in: str = "") -> dict:
+             client, asked_in: str = "", probes: dict | None = None) -> dict:
     pool = getattr(client, "pool", None)
     # Clustering collapses word-order variants and plurals, so the number of
     # KEYWORDS is smaller than the number of raw phrases returned. Reporting the
@@ -58,6 +58,11 @@ def metadata(universe: Universe, clusters: list[Cluster], egress: dict,
         # The markets deliberately asked for, which is the only thing that makes
         # a per-keyword market claim meaningful. Empty means none was asked.
         "markets": universe.market,
+        # Which markets were crawled in full and which were only sampled. A
+        # reader comparing two markets in the Markets column has to know one of
+        # them was asked sixty queries and the other fifty thousand, or they will
+        # read a sampling difference as a demand difference.
+        "market_probes": dict(probes or {}),
         "vertical": client.ds or "web",
         "egress_ip": egress.get("ip", ""),
         "egress_country": egress.get("country", "unknown"),
@@ -374,6 +379,16 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
     geography = (f"{asked_markets.replace(' ', ', ')} — asked for by name with gl="
                  if asked_markets
                  else "none asked for; no column in this file names a market")
+    probes = meta.get("market_probes") or {}
+    set_aside = ", ".join(
+        f"{code} ({verdict['novelty']:.0%} new)"
+        for code, verdict in probes.items() if not verdict.get("kept"))
+    sampling = (
+        f"{set_aside} — sampled with {meta.get('probe_queries', 0)} queries each "
+        "and set aside for returning what the primary market already had. Their "
+        "sample is included, so they appear in Markets on fewer keywords than a "
+        "fully crawled market would"
+        if set_aside else "every market asked was crawled in full")
 
     run.append(["Keyword universe", meta.get("seed", "")])
     run["A1"].font = title_font
@@ -397,6 +412,7 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
         ("Harvested (UTC)", meta.get("harvested_at", "")),
         ("Source", "Google autocomplete only"),
         ("Market / geography", geography),
+        ("Markets set aside", sampling),
         ("Language", meta.get("language", "")),
         ("How it ended", complete),
         ("Rounds completed", meta.get("levels_run", "")),

@@ -39,8 +39,9 @@ additionally needs the rotating pool, which is one install away:
 Three things a caller does not have to remember. **A seed's spellings are one
 seed**: ``fundingpips`` and ``funding pips`` are crawled together, land in one
 file and cluster as one keyword. **A harvest asks the project's target markets**
-— sixteen countries by default, each in the language it searches in — rather than
-whichever one the caller typed. And **every keyword carries its language**, so a
+— sixteen countries by default, each in the language it searches in — but crawls
+in full only the ones that answer differently from the primary market, deciding
+on a sixty-query sample rather than on a full crawl it cannot take back. And **every keyword carries its language**, so a
 sixteen-country file separates rather than blurs.
 
 The hard limit, stated once here and repeated in every output: **autocomplete

@@ -582,13 +582,60 @@ Philippines, Malaysia — the table says so on purpose, because asking those
 markets in a local language returns a smaller and less commercial universe than
 their searchers actually use.
 
+**A market is sampled before it is bought.** Sixteen markets is sixteen crawls,
+and most secondary markets return the primary market's own answers in a different
+accent — paying full price for that was the largest avoidable cost in a
+multi-market run. So the primary market (the head of the list, `US` by default,
+or `--primary`) is crawled in full and becomes the reference; every other market
+is then asked a **60-query sample** of the seed tier — about a sixth of one tier,
+and a rounding error against a full crawl — and only the markets whose answers
+are genuinely different are crawled in full.
+
+"Different" is measured as **novelty**: the share of the probe's phrases that the
+primary market did **not** return *to those same queries*. Comparing against the
+primary's whole universe instead would make the threshold drift with `--levels` —
+the same market scores 29% against a level-0 primary and less against a deeper
+one — so both sides of the comparison get the same questions and the same sample
+size. It costs nothing: the primary crawl already asked all of them, so the
+reference comes back from the cache.
+
+A market earns its crawl when at least **22%** of its sample is unseen *and* at
+least 15 phrases are. Both tests, never either: a market returning four phrases,
+all new, is 100% novel and worth nothing.
+
+The 22% is measured, and the guess it replaced was 25% — which would have thrown
+away Germany, France and Spain. Probing all fifteen secondary target markets
+against a US primary (seed `fundingpips`, 60 queries each, 2026-09-04):
+
+| crawled in full | | set aside | |
+|---|---|---|---|
+| ES | 42% | IN | 17% |
+| ID | 40% | NG | 12% |
+| AR | 40% | KE | 12% |
+| DE | 32% | PK | 11% |
+| FR | 30% | CA · ZA | 5% |
+| PT · BR | 29% | PH · MY | 5% |
+
+Nothing lands between 17% and 29%, and that gap is not an accident of this seed:
+it is the line between markets asked in another language and markets asked in
+English. Seven markets crawled instead of sixteen, for a probe costing under 2%
+of a single market's crawl. India is the closest call and the one to re-examine
+if a seed's own numbers move.
+
+The probe's own findings are kept and merged — those requests were paid for, and
+what they found is true even where it did not justify more. The Run sheet says
+which markets were crawled in full and which were sampled and set aside, with
+each one's novelty, so nobody reads a sampling difference as a demand difference.
+`--probe 0` turns the whole mechanism off and crawls every market in full.
+
 Precedence, and it is the same as every other knob here — the command line beats
 the project, the project beats the default:
 
 ```bash
-python -m keel_seo.keywords ftmo                     # the sixteen
+python -m keel_seo.keywords ftmo                     # US in full, the other 15 probed
 python -m keel_seo.keywords ftmo --markets us,de     # just these
-python -m keel_seo.keywords ftmo --markets target    # the list, named explicitly
+python -m keel_seo.keywords ftmo --primary de        # measure everything against DE
+python -m keel_seo.keywords ftmo --probe 0           # crawl all sixteen in full
 python -m keel_seo.keywords ftmo --markets '' --hl en   # ask no market at all
 ```
 
@@ -893,4 +940,6 @@ Google from the machine running the harvest is refused, because the block it ear
 is IP-wide and costs the whole host its access. v0.29.0 makes a harvest cover the
 seed's other spellings in one file and one cluster, asks the project's sixteen
 target markets each in the language it searches in, and names every keyword's
-language in its own column.
+language in its own column. v0.30.0 stops paying for markets that only echo the
+primary one: each is sampled with sixty queries first, and on the measured
+distribution seven of sixteen earn a full crawl.

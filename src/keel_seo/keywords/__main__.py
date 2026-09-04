@@ -8,7 +8,9 @@ import sys
 
 from . import cluster as clustering
 from . import markets as target_markets
-from .crawl import DEFAULT_MAX_VARIANTS, crawl, merge_markets
+from .crawl import (DEFAULT_MAX_VARIANTS, PROBE_NOVELTY_FLOOR,
+                    PROBE_NOVELTY_SHARE, PROBE_QUERIES, crawl, merge_markets,
+                    probe_market, worth_crawling)
 from .markets import ENV_NAME as MARKET_ENV, SETTING_NAME as MARKET_SETTING
 from .markets import TARGET_MARKETS, UnknownMarket
 from .report import metadata, write_all
@@ -87,6 +89,26 @@ def build_parser() -> argparse.ArgumentParser:
                               "search in returns a small and unrepresentative "
                               "slice of it. Set this to ask every market in one "
                               "language"))
+    parser.add_argument("--primary", default="",
+                        help=("the market crawled in full and used as the "
+                              "reference for every other one (default: the first "
+                              "in --markets, which is US in the target list)"))
+    parser.add_argument("--probe", type=int, default=PROBE_QUERIES,
+                        help=(f"queries used to sample each secondary market "
+                              f"before deciding whether to crawl it (default "
+                              f"{PROBE_QUERIES}, 0 crawls every market in full). "
+                              "Most markets return the primary market's own "
+                              "answers, and crawling those is the largest "
+                              "avoidable cost in a multi-market run"))
+    parser.add_argument("--probe-share", type=float, default=PROBE_NOVELTY_SHARE,
+                        help=(f"share of a probe's phrases that must be unseen in "
+                              f"the primary market for it to earn a full crawl "
+                              f"(default {PROBE_NOVELTY_SHARE:.2f})"))
+    parser.add_argument("--probe-floor", type=int, default=PROBE_NOVELTY_FLOOR,
+                        help=(f"and how many unseen phrases at minimum (default "
+                              f"{PROBE_NOVELTY_FLOOR}). Both tests must pass: a "
+                              "market returning four phrases, all new, is 100%% "
+                              "novel and worth nothing"))
     parser.add_argument("--variants", default="",
                         help=("comma-separated alternative spellings of the seed to "
                               "crawl as well, e.g. 'funding pips'. Rarely needed: "
@@ -255,15 +277,14 @@ def _run(args, progress, cache_path: str) -> int:
     # three markets is asking for six hours of each, and a shared deadline would
     # silently starve the last one.
     given = tuple(v.strip() for v in args.variants.split(",") if v.strip())
-    per_market: dict = {}
-    for code in (markets or [""]):
+
+    def full_crawl(code: str, variants: tuple[str, ...]):
         if code:
             language = target_markets.language_for(code, args.hl)
             progress(f"market {code}: asking Google as gl={code.lower()} hl={language}")
-        client = build_client(code)
-        per_market[code] = crawl(
+        return crawl(
             args.seed,
-            client,
+            build_client(code),
             levels=args.levels,
             budget=args.budget,
             saturate=args.saturate,
@@ -271,12 +292,75 @@ def _run(args, progress, cache_path: str) -> int:
             tight=not args.no_tight,
             wildcards=args.wildcards,
             max_seconds=args.max_seconds,
-            variants=given,
+            variants=variants,
             max_variants=args.max_variants,
             progress=progress,
         )
-        if code:
+
+    per_market: dict = {}
+    probes: dict = {}
+    if not markets:
+        per_market[""] = full_crawl("", given)
+    else:
+        # The primary market is crawled in full and becomes the reference every
+        # other market is measured against. It is first in the list rather than a
+        # separate setting, because "the market this site is written for" is
+        # already what the head of that list means.
+        primary = args.primary.upper() if args.primary else markets[0]
+        if primary not in markets:
+            markets = [primary] + markets
+        rest = [code for code in markets if code != primary]
+        per_market[primary] = full_crawl(primary, given)
+        progress(f"market {primary}: {len(per_market[primary].phrases):,} phrases "
+                 "(primary, the reference every other market is measured against)")
+
+        # A secondary market is sampled before it is bought. Most of them return
+        # the primary market's own answers in a different accent, and crawling
+        # those in full was the largest avoidable cost in a sixteen-market run.
+        spellings = tuple(per_market[primary].variants)
+        # The reference is what the primary answered to the SAME sample, not its
+        # whole universe, so the comparison does not shift with --levels. It costs
+        # nothing: the primary crawl already asked every one of these queries, so
+        # all of them come back from the cache.
+        reference: set = set()
+        if args.probe > 0 and rest:
+            reference_sample, _ = probe_market(
+                args.seed, build_client(primary), (),
+                queries=args.probe, tight=not args.no_tight,
+                wildcards=args.wildcards, variants=spellings)
+            reference = set(reference_sample.phrases)
+            progress(f"probe reference: {len(reference)} phrases from {primary} "
+                     f"on the same {args.probe} queries")
+        earned: list[str] = []
+        for code in rest:
+            if args.probe <= 0:
+                earned.append(code)
+                continue
+            language = target_markets.language_for(code, args.hl)
+            sampled, verdict = probe_market(
+                args.seed, build_client(code), reference,
+                queries=args.probe, tight=not args.no_tight,
+                wildcards=args.wildcards, variants=spellings)
+            keep = worth_crawling(verdict, share=args.probe_share,
+                                  floor=args.probe_floor)
+            verdict["kept"] = keep
+            verdict["language"] = language
+            probes[code] = verdict
+            progress(f"probe {code} (hl={language}): {verdict['phrases']} phrases, "
+                     f"{verdict['new']} unseen ({verdict['novelty']:.0%}) — "
+                     f"{'crawling in full' if keep else 'set aside'}")
+            if keep:
+                earned.append(code)
+            elif sampled.phrases:
+                # Kept, not discarded: these requests were already paid for, and
+                # what they found is true even where it did not justify more.
+                per_market[code] = sampled
+        for code in earned:
+            per_market[code] = full_crawl(code, spellings)
             progress(f"market {code}: {len(per_market[code].phrases):,} phrases")
+        if probes:
+            progress(f"markets: {1 + len(earned)} crawled in full, "
+                     f"{len(probes) - len(earned)} probed and set aside")
 
     universe = merge_markets(args.seed, {c: u for c, u in per_market.items() if c})
     if not markets:
@@ -295,7 +379,9 @@ def _run(args, progress, cache_path: str) -> int:
     asked_in = ", ".join(sorted({target_markets.language_for(code, args.hl)
                                  for code in markets})) if markets else args.hl
     meta = metadata(universe, clusters, egress,
-                    build_client(markets[0] if markets else ""), asked_in=asked_in)
+                    build_client(markets[0] if markets else ""),
+                    asked_in=asked_in, probes=probes)
+    meta["probe_queries"] = args.probe
     paths = write_all(args.out, universe, clusters, meta)
 
     progress(

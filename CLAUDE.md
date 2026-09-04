@@ -27,7 +27,18 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
   in `cluster.build`), the **target markets** are a package default of sixteen
   countries each paired with the language it searches in (`keywords/markets.py`,
   overridable per project with `KEEL_SEO["keyword_markets"]`, the
-  `KEEL_SEO_KEYWORD_MARKETS` env var, or `--markets`), and every keyword's
+  `KEEL_SEO_KEYWORD_MARKETS` env var, or `--markets`) — **crawled in full only
+  where they earn it**: the primary market (list head, US) is the reference and
+  every other market is sampled with 60 queries first and kept only if ≥22% of
+  its answers to *those same queries* are unseen in the primary's
+  (`crawl.probe_market` + `worth_crawling`; the reference is the primary's own
+  sample, not its universe, or the threshold drifts with `--levels`). The 22%
+  is measured — see the distribution in `crawl.PROBE_NOVELTY_SHARE`, kept in a
+  test — and it replaced a guess of 25% that would have discarded Germany,
+  France and Spain. Do not "simplify" that back to crawling every market, and
+  do not drop a probed market's phrases — they are paid for and merged, with the
+  Run sheet naming which markets were sampled rather than crawled. And every
+  keyword's
   **language** is named deterministically (`keywords/language.py` — script,
   vocabulary, then diacritics; never a model, and never a guess where the
   evidence is a shared accent). **A harvest never asks from the machine running it** —
