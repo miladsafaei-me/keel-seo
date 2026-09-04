@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keel-seo"
-version = "0.30.2"
+version = "0.30.3"
 description = "Keel SEO — reusable Landing Registry, sitemap, noindex-by-default gate, intent registry, critical-CSS engine, a complete Google Search Console API client (Search Analytics, URL Inspection, Indexing, Sitemaps, Sites), and an autocomplete-only keyword-universe crawler with lexical clustering."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,7 +25,7 @@ gsc = ["google-api-python-client>=2.0", "google-auth>=2.0", "openpyxl>=3.0"]
 # matching distribution found" - which is exactly what it did on the production
 # host. Every keel consumer already pins these by git tag for the same reason.
 proxies = [
-    "keel-crawler @ git+https://github.com/miladsafaei-me/keel-crawler@v0.15.1",
+    "keel-crawler @ git+https://github.com/miladsafaei-me/keel-crawler@v0.15.2",
 ]
 # The .xlsx workbook. Optional so the crawler stays stdlib-only by default; the
 # JSON, CSV and Markdown are always written, so a missing openpyxl costs the
