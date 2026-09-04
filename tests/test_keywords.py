@@ -7,6 +7,7 @@ tested against fixed inputs.
 Run: DJANGO_SETTINGS_MODULE=tests.settings python -m django test tests.test_keywords
      python -m unittest tests.test_keywords
 """
+import json
 import os
 import tempfile
 import unittest
@@ -1204,3 +1205,78 @@ class TheEgressRule(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DepthBelongsToThePrimaryMarket(unittest.TestCase):
+    """Measured on `pocket option` (2026-09-04, 518,762 queries, 7,071 keywords):
+    level 2 took 38% of the run and contributed 482 keywords, and the seven
+    secondary crawls added 1,794 of which 1,472 were already there at level 1.
+    """
+
+    def parse(self, argv):
+        from keel_seo.keywords.__main__ import build_parser
+
+        return build_parser().parse_args(["seed"] + argv)
+
+    def test_a_secondary_market_is_shallower_by_default(self):
+        args = self.parse([])
+        self.assertEqual(args.levels, 2)
+        self.assertEqual(args.secondary_levels, 1)
+
+    def test_a_secondary_market_is_never_deeper_than_the_primary(self):
+        args = self.parse(["--levels", "1", "--secondary-levels", "3"])
+        self.assertEqual(max(0, min(args.secondary_levels, args.levels)), 1)
+
+    def test_the_discount_can_be_turned_off(self):
+        args = self.parse(["--levels", "2", "--secondary-levels", "2"])
+        self.assertEqual(max(0, min(args.secondary_levels, args.levels)), 2)
+
+    def test_a_secondary_market_can_be_reduced_to_its_seed_tier(self):
+        args = self.parse(["--secondary-levels", "0"])
+        self.assertEqual(max(0, min(args.secondary_levels, args.levels)), 0)
+
+    def test_the_walker_leaves_the_choice_to_the_crawler_unless_told(self):
+        from keel_seo.keywords.harvest import build_parser
+
+        args = build_parser().parse_args(["--seeds", "s.txt", "--out", "."])
+        self.assertIsNone(args.secondary_levels)
+
+
+class APartialHarvestIsStillHandedOver(unittest.TestCase):
+    """A run that dies three hours in used to deliver nothing at all."""
+
+    def universe(self):
+        from keel_seo.keywords.crawl import Phrase, Universe
+
+        universe = Universe(seed="pocket option")
+        universe.phrases["pocket option login"] = Phrase(
+            text="pocket option login", best_rank=1, max_relevance=900,
+            first_level=0, markets={"US": 1})
+        universe.queries_asked = 758
+        return universe
+
+    def test_the_snapshot_carries_the_phrases_and_the_markets_finished(self):
+        from keel_seo.keywords import report
+
+        with tempfile.TemporaryDirectory() as out:
+            path = report.write_partial(out, self.universe(), ["US", "DE"])
+            payload = json.load(open(path, encoding="utf-8"))
+        self.assertEqual(payload["markets_done"], ["US", "DE"])
+        self.assertEqual(payload["phrases_found"], 1)
+        self.assertEqual(payload["phrases"][0]["text"], "pocket option login")
+
+    def test_a_finished_run_clears_its_own_snapshot(self):
+        from keel_seo.keywords import cluster as clustering
+        from keel_seo.keywords import report
+
+        with tempfile.TemporaryDirectory() as out:
+            universe = self.universe()
+            snapshot = report.write_partial(out, universe, ["US"])
+            self.assertTrue(os.path.exists(snapshot))
+            clusters = clustering.build(universe, topics=1)
+            meta = report.metadata(universe, clusters, {},
+                                   SuggestClient(hl="en"), asked_in="en")
+            report.write_all(out, universe, clusters, meta)
+            self.assertFalse(os.path.exists(snapshot),
+                             "a finished run must not leave two files claiming "
+                             "to be the answer")

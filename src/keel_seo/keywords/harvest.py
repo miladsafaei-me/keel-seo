@@ -132,6 +132,10 @@ def build_parser() -> argparse.ArgumentParser:
                               "markets - the default belongs there, not in a "
                               "second copy here"))
     parser.add_argument("--levels", type=int, default=2)
+    parser.add_argument("--secondary-levels", type=int, default=None,
+                        help="depth for markets other than the primary; left "
+                             "unset the crawler uses its own default, which is "
+                             "shallower than --levels on purpose")
     parser.add_argument("--seconds", type=int, default=DEFAULT_SECONDS,
                         help=f"graceful deadline per seed (default {DEFAULT_SECONDS})")
     parser.add_argument("--proxies", default="auto",
@@ -188,6 +192,8 @@ def main(argv: list[str] | None = None) -> int:
                    "--proxies", args.proxies]
         if args.markets is not None:
             command.extend(["--markets", args.markets])
+        if args.secondary_levels is not None:
+            command.extend(["--secondary-levels", str(args.secondary_levels)])
         if seed.variants:
             command.extend(["--variants", ",".join(seed.variants)])
         # --extra last, so a run can still override anything above it: argparse

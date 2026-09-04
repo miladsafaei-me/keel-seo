@@ -644,6 +644,46 @@ sets `KEEL_SEO_KEYWORD_MARKETS` in the environment. Both take the same shape as
 `--markets`. Cost scales with the list: sixteen markets is sixteen crawls, and
 the throughput ceiling is the proxy pool's, not the throttle's.
 
+### Depth belongs to the primary market
+
+The secondary markets are asked one level deep, not the caller's `--levels`, and
+the difference is most of a run's cost. Measured on `pocket option`
+(2026-09-04, 518,762 queries over eight full market crawls, 7,071 keywords):
+
+| level | queries | phrases | queries per phrase |
+|---|---|---|---|
+| 0 | 86,066 | 27,690 | 3.1 |
+| 1 | 257,343 | 17,023 | 15.1 |
+| 2 | 195,815 | 3,999 | 49.0 |
+
+Level 2 took 38% of the run and, after the markets were merged and
+deduplicated, contributed **482 of the 7,071 keywords**. And the primary market
+alone returned 5,240 of them: the seven secondary crawls added 1,794 between
+them, of which 732 were found at level 0 and 740 more at level 1, leaving 322
+that needed level 2. Each secondary market's *unique* contribution was 1.0-4.3%
+of what it returned.
+
+So `--secondary-levels` defaults to 1 and is capped at `--levels`. On that run
+it would have cost about 29% fewer queries for about 95% of the keywords;
+`--secondary-levels 0` would have cost 73% fewer for 84%.
+
+This is not an argument for asking fewer markets. The probe is right about
+*which* markets differ — it scored Germany 33% novel and Germany's seed tier
+really was different — it simply cannot predict marginal yield after expansion,
+because every market re-seeds from phrases containing the seed and the deep
+tiers converge on one brand space. The markets are worth asking; they are not
+worth asking deeply.
+
+### A run that dies still hands over what it found
+
+A harvest holds everything in memory and writes its four files once, at the end,
+so a run that died at the seventh market of eight delivered nothing. It now
+writes `<seed>.partial.json` after each market — the raw phrase table, no
+clustering, deleted when the run finishes. Unclustered on purpose: clustering a
+finished universe takes about a hundred seconds, so doing it per market would
+cost every successful run more than it saves on the rare failed one, and the
+phrases are the part that took hours to collect.
+
 ### Which language each keyword is in
 
 Every keyword carries a **Language** column — `English`, `German`, `Portuguese`,

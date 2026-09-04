@@ -13,6 +13,7 @@ from .crawl import (DEFAULT_MAX_VARIANTS, PROBE_NOVELTY_FLOOR,
                     probe_market, worth_crawling)
 from .markets import ENV_NAME as MARKET_ENV, SETTING_NAME as MARKET_SETTING
 from .markets import TARGET_MARKETS, UnknownMarket
+from . import report
 from .report import metadata, write_all
 from .proxying import (AVAILABLE as PROXIES_AVAILABLE, MISSING_MESSAGE,
                        PER_PROXY_PER_HOUR, PER_PROXY_PER_MINUTE, PER_PROXY_RPS,
@@ -24,6 +25,27 @@ from .suggest import DEFAULT_RATE, SuggestCache, SuggestClient
 # to be: surplus workers block harmlessly in acquire(), while a shortfall leaves
 # verified addresses idle and is the difference between 0.4 and 30 queries/second.
 POOLED_WORKERS = 120
+# How deep a market that is not the primary is crawled. One, not the caller's
+# --levels, and the difference is most of a run's cost.
+#
+# Measured on `pocket option`, 2026-09-04, 518,762 queries over eight full market
+# crawls producing 7,071 keywords:
+#
+#   level 0   86,066 queries -> 27,690 phrases    3.1 queries per phrase
+#   level 1  257,343 queries -> 17,023 phrases   15.1
+#   level 2  195,815 queries ->  3,999 phrases   49.0
+#
+# Level 2 took 38% of the run and, after the markets were merged and deduplicated,
+# contributed 482 of the 7,071 keywords. And the primary market alone returned
+# 5,240 of them: the seven secondary crawls added 1,794 between them, of which 732
+# were found at level 0 and 740 more at level 1, leaving 322 that needed level 2.
+#
+# So the depth belongs to the primary market. The probe already decides *which*
+# secondary markets are worth asking, and it is right about that — it scored
+# Germany 33% novel and Germany's seed tier really was different. What it cannot
+# predict is marginal yield after expansion, because every market re-seeds from
+# phrases containing the seed and the deep tiers converge on one brand space.
+DEFAULT_SECONDARY_LEVELS = 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,6 +64,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", default=".", help="directory for the three output files")
     parser.add_argument("--levels", type=int, default=2,
                         help="re-seeding rounds after the seed itself (default 2)")
+    parser.add_argument("--secondary-levels", type=int, default=DEFAULT_SECONDARY_LEVELS,
+                        help=(f"depth for every market that is not the primary "
+                              f"(default {DEFAULT_SECONDARY_LEVELS}). A secondary "
+                              "market's value is in its shallow tier: measured on "
+                              "a 16-market run, the seven secondary crawls added "
+                              "1,794 keywords of which 1,472 were already there at "
+                              "level 1. Never deeper than --levels."))
     parser.add_argument("--budget", type=int, default=150000,
                         help=("runaway guard on queries asked (default 150000). "
                               "It is NOT the plan: --levels and --frontier already "
@@ -278,14 +307,20 @@ def _run(args, progress, cache_path: str) -> int:
     # silently starve the last one.
     given = tuple(v.strip() for v in args.variants.split(",") if v.strip())
 
-    def full_crawl(code: str, variants: tuple[str, ...]):
+    # A secondary market is never crawled deeper than the primary: --levels is
+    # the run's depth and this is a discount on it, not a way past it.
+    secondary_levels = max(0, min(args.secondary_levels, args.levels))
+
+    def full_crawl(code: str, variants: tuple[str, ...], levels: int | None = None):
+        depth = args.levels if levels is None else levels
         if code:
             language = target_markets.language_for(code, args.hl)
-            progress(f"market {code}: asking Google as gl={code.lower()} hl={language}")
+            progress(f"market {code}: asking Google as gl={code.lower()} "
+                     f"hl={language}, {depth} level(s)")
         return crawl(
             args.seed,
             build_client(code),
-            levels=args.levels,
+            levels=depth,
             budget=args.budget,
             saturate=args.saturate,
             frontier_cap=args.frontier,
@@ -296,6 +331,18 @@ def _run(args, progress, cache_path: str) -> int:
             max_variants=args.max_variants,
             progress=progress,
         )
+
+    def snapshot(collected: dict) -> None:
+        """Write what is found so far, so a run that dies still hands it over."""
+        done = [code for code in collected if code]
+        if not done:
+            return
+        try:
+            merged_so_far = merge_markets(args.seed,
+                                          {c: u for c, u in collected.items() if c})
+            report.write_partial(args.out, merged_so_far, done)
+        except Exception:  # noqa: BLE001 - insurance must never end the run
+            pass
 
     per_market: dict = {}
     probes: dict = {}
@@ -355,9 +402,14 @@ def _run(args, progress, cache_path: str) -> int:
                 # Kept, not discarded: these requests were already paid for, and
                 # what they found is true even where it did not justify more.
                 per_market[code] = sampled
+        if earned and secondary_levels != args.levels:
+            progress(f"secondary markets crawl {secondary_levels} level(s) against "
+                     f"the primary's {args.levels}: measured, the depth beyond that "
+                     "is where a secondary market stops paying for itself")
         for code in earned:
-            per_market[code] = full_crawl(code, spellings)
+            per_market[code] = full_crawl(code, spellings, levels=secondary_levels)
             progress(f"market {code}: {len(per_market[code].phrases):,} phrases")
+            snapshot(per_market)
         if probes:
             progress(f"markets: {1 + len(earned)} crawled in full, "
                      f"{len(probes) - len(earned)} probed and set aside")

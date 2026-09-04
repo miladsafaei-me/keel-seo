@@ -486,6 +486,46 @@ def slugify(seed: str) -> str:
     return stem.strip("-")
 
 
+def partial_path(outdir: str, seed: str) -> str:
+    return os.path.join(outdir, f"{slugify(seed)}.partial.json")
+
+
+def write_partial(outdir: str, universe: Universe, markets_done) -> str:
+    """Dump what a running harvest has found so far, unclustered.
+
+    A harvest holds everything in memory and writes its four files once, at the
+    end, so a run that dies at the seventh market of eight delivers nothing —
+    which is what happened on 2026-09-04 when one died of ``OSError 24`` three
+    hours in. The response cache means no *queries* were lost and the restart
+    replayed in about twelve minutes, so this is insurance, not a deliverable.
+
+    **Unclustered on purpose.** Clustering a finished universe takes about a
+    hundred seconds, and doing it after every market would add more time to
+    every successful run than it saves on the rare failed one. What is written
+    here is the raw phrase table, which is the part that cost hours to collect;
+    the clustering that turns it into a workbook is a minute's work to redo.
+    """
+    os.makedirs(outdir, exist_ok=True)
+    path = partial_path(outdir, universe.seed)
+    payload = {
+        "note": ("Partial harvest, written after each market completes and "
+                 "deleted when the run finishes. Phrases only, no clustering."),
+        "seed": universe.seed,
+        "markets_done": list(markets_done),
+        "phrases_found": len(universe.phrases),
+        "queries_asked": universe.queries_asked,
+        "phrases": [
+            {"text": phrase.text, "best_rank": phrase.best_rank,
+             "relevance": phrase.max_relevance, "level": phrase.first_level,
+             "markets": phrase.markets}
+            for phrase in universe.phrases.values()
+        ],
+    }
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False)
+    return path
+
+
 def write_all(outdir: str, universe: Universe, clusters: list[Cluster],
               meta: dict) -> dict[str, str]:
     os.makedirs(outdir, exist_ok=True)
@@ -502,4 +542,11 @@ def write_all(outdir: str, universe: Universe, clusters: list[Cluster],
     xlsx_path = os.path.join(outdir, f"{stem}.xlsx")
     if write_xlsx(xlsx_path, universe, clusters, meta):
         paths["xlsx"] = xlsx_path
+    # The snapshot existed only to survive a crash; a finished run is the thing
+    # it was insuring, and leaving it behind would have the next reader wondering
+    # which of the two files is the answer.
+    try:
+        os.remove(partial_path(outdir, universe.seed))
+    except OSError:
+        pass
     return paths
