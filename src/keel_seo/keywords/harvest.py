@@ -74,8 +74,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", required=True, help="directory for the outputs")
     parser.add_argument("--log", default="", help="append progress here as well as "
                                                   "to stderr")
-    parser.add_argument("--markets", default="us",
-                        help="markets to ask, passed straight through (default us)")
+    parser.add_argument("--markets", default=None,
+                        help=("markets to ask, passed straight through. Left "
+                              "unset, the crawler resolves the project's target "
+                              "markets - the default belongs there, not in a "
+                              "second copy here"))
     parser.add_argument("--levels", type=int, default=2)
     parser.add_argument("--seconds", type=int, default=DEFAULT_SECONDS,
                         help=f"graceful deadline per seed (default {DEFAULT_SECONDS})")
@@ -128,9 +131,11 @@ def main(argv: list[str] | None = None) -> int:
             skipped += 1
             continue
         command = [sys.executable, "-m", "keel_seo.keywords", seed,
-                   "--out", args.out, "--markets", args.markets,
+                   "--out", args.out,
                    "--levels", str(args.levels), "--max-seconds", str(args.seconds),
                    "--proxies", args.proxies]
+        if args.markets is not None:
+            command.extend(["--markets", args.markets])
         if args.extra:
             command.extend(args.extra.split())
         log(f"harvesting {seed!r}")

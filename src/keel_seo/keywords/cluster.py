@@ -145,6 +145,11 @@ DEFAULT_TOPICS = 200
 # An anchor word must name a real group, not one phrase.
 MIN_ANCHOR_PHRASES = 3
 
+# How many of a keyword's absorbed surface forms are named in the output. Enough
+# to show that a brand is typed two ways and that word order moves around; not so
+# many that a cell becomes a list nobody reads.
+MAX_NAMED_VARIANTS = 4
+
 # Where phrases go when they contain no anchor word at all. Named, and left
 # whole, rather than forced into the nearest topic: a similarity fallback was
 # measured and placed one phrase out of 7,476, while misfiling `quotex
@@ -207,7 +212,15 @@ def build(universe: Universe, *, topics: int = DEFAULT_TOPICS,
     if not phrases:
         return []
 
+    # Every spelling of the seed is dropped, not only the canonical one. With
+    # just `fundingpips` dropped, "funding pips rules" keeps `funding` and `pips`
+    # as content words while "fundingpips rules" keeps none — so two spellings of
+    # one keyword describe two different topics and land in two clusters. The
+    # seed is what every phrase in the universe has in common; no spelling of it
+    # can be what a phrase is about.
     drop = STOPWORDS | set(seed_tokens(universe.seed))
+    for spelling in getattr(universe, "variants", ()):
+        drop |= set(seed_tokens(spelling))
     vocabulary = {t for phrase in phrases for t in tokenize(phrase.text, drop)}
 
     def content(text: str) -> frozenset[str]:
@@ -224,6 +237,10 @@ def build(universe: Universe, *, topics: int = DEFAULT_TOPICS,
         members.sort(key=lambda p: -p.priority)
         head = members[0]
         head.variants = len(members)
+        # Named, not just counted. Which other ways a keyword is typed is the
+        # answer to "do people write the brand with a space", and a bare count
+        # cannot answer it. Capped, because the point is evidence, not a dump.
+        head.also_written = [m.text for m in members[1:MAX_NAMED_VARIANTS + 1]]
         # The strongest evidence in the group represents it: a variant surfaced by
         # more queries is the same keyword, so its reach belongs to the keyword.
         head.parents = set().union(*(m.parents for m in members))

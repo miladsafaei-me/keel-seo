@@ -7,7 +7,10 @@ import os
 import sys
 
 from . import cluster as clustering
-from .crawl import crawl, merge_markets
+from . import markets as target_markets
+from .crawl import DEFAULT_MAX_VARIANTS, crawl, merge_markets
+from .markets import ENV_NAME as MARKET_ENV, SETTING_NAME as MARKET_SETTING
+from .markets import TARGET_MARKETS, UnknownMarket
 from .report import metadata, write_all
 from .proxying import (AVAILABLE as PROXIES_AVAILABLE, MISSING_MESSAGE,
                        PER_PROXY_PER_HOUR, PER_PROXY_PER_MINUTE, PER_PROXY_RPS,
@@ -61,17 +64,37 @@ def build_parser() -> argparse.ArgumentParser:
                         help=(f"sustained queries per second (default {DEFAULT_RATE}). "
                               "Google blocked an unthrottled run at ~5,000 requests; "
                               "0 disables the throttle"))
-    parser.add_argument("--markets", default="us",
+    parser.add_argument("--markets", default=None,
                         help=("comma-separated ISO-3166 alpha-2 markets to ask, "
-                              "e.g. 'us,in,br' (default 'us'). Each market is a "
-                              "separate crawl asked with gl=, and the outputs are "
-                              "merged with per-market evidence per keyword - which "
-                              "is the only honest way to say where a keyword is "
-                              "searched. Cost scales with the number of markets. "
-                              "Pass '' to ask no market at all, in which case "
-                              "whichever address answers decides the results and "
-                              "nothing in the output can name a market"))
-    parser.add_argument("--hl", default="en", help="interface language (default en)")
+                              "e.g. 'us,in,br'. Default is the project's target "
+                              f"markets ({len(TARGET_MARKETS)} countries: "
+                              f"{', '.join(TARGET_MARKETS)}), overridable per "
+                              f"project with KEEL_SEO[\"{MARKET_SETTING}\"] or the "
+                              f"{MARKET_ENV} environment variable. 'target' names "
+                              "that list explicitly. Each market is a separate "
+                              "crawl asked with gl=, merged afterwards with "
+                              "per-market evidence on every keyword - the only "
+                              "honest way to say where a keyword is searched. Cost "
+                              "scales with the number of markets. Pass '' to ask no "
+                              "market at all, in which case whichever address "
+                              "answers decides the results and nothing in the "
+                              "output can name a market"))
+    parser.add_argument("--hl", default="",
+                        help=("interface language. Default asks each market in the "
+                              "language its search is conducted in - Germany in "
+                              "German, Brazil in Portuguese, India in English - "
+                              "because asking a market in a language it does not "
+                              "search in returns a small and unrepresentative "
+                              "slice of it. Set this to ask every market in one "
+                              "language"))
+    parser.add_argument("--variants", default="",
+                        help=("comma-separated alternative spellings of the seed to "
+                              "crawl as well, e.g. 'funding pips'. Rarely needed: "
+                              "the crawl finds the spellings Google itself returns"))
+    parser.add_argument("--max-variants", type=int, default=DEFAULT_MAX_VARIANTS,
+                        help=(f"how many discovered spellings to chase (default "
+                              f"{DEFAULT_MAX_VARIANTS}, 0 disables discovery). Each "
+                              "one costs a full seed-tier expansion"))
     parser.add_argument("--ds", default="",
                         help="vertical: yt, sh, nws, bks. Default is web search")
     parser.add_argument("--client", default="chrome", choices=("chrome", "firefox"),
@@ -199,13 +222,15 @@ def _run(args, progress, cache_path: str) -> int:
         workers = POOLED_WORKERS
         progress(f"concurrency: {workers} workers (pooled)")
 
-    markets = [code.strip().upper() for code in args.markets.split(",")
-               if code.strip()]
-    for code in markets:
-        if len(code) != 2 or not code.isalpha():
-            print(f"--markets takes ISO-3166 alpha-2 codes; {code!r} is not one",
-                  file=sys.stderr)
-            return 1
+    try:
+        markets = target_markets.resolve(args.markets)
+    except UnknownMarket as bad:
+        print(str(bad), file=sys.stderr)
+        return 1
+    if markets:
+        asked = ", ".join(f"{code}/{target_markets.language_for(code, args.hl)}"
+                          for code in markets)
+        progress(f"markets ({len(markets)}): {asked}")
     # One shared cache across the markets: its key already carries the market, so
     # the markets cannot read each other's answers, and a re-run of any of them
     # still replays for free.
@@ -213,7 +238,10 @@ def _run(args, progress, cache_path: str) -> int:
 
     def build_client(market: str) -> SuggestClient:
         return SuggestClient(
-            hl=args.hl,
+            # A market is asked in the language it searches in, unless the caller
+            # said otherwise. Asking Brazil in English returns the small English
+            # slice of Brazilian demand and calls it Brazil.
+            hl=target_markets.language_for(market, args.hl),
             gl=market,
             ds=args.ds,
             client=args.client,
@@ -226,10 +254,12 @@ def _run(args, progress, cache_path: str) -> int:
     # The deadline is per market, not for the walk: a run given six hours and
     # three markets is asking for six hours of each, and a shared deadline would
     # silently starve the last one.
+    given = tuple(v.strip() for v in args.variants.split(",") if v.strip())
     per_market: dict = {}
     for code in (markets or [""]):
         if code:
-            progress(f"market {code}: asking Google as gl={code.lower()}")
+            language = target_markets.language_for(code, args.hl)
+            progress(f"market {code}: asking Google as gl={code.lower()} hl={language}")
         client = build_client(code)
         per_market[code] = crawl(
             args.seed,
@@ -241,6 +271,8 @@ def _run(args, progress, cache_path: str) -> int:
             tight=not args.no_tight,
             wildcards=args.wildcards,
             max_seconds=args.max_seconds,
+            variants=given,
+            max_variants=args.max_variants,
             progress=progress,
         )
         if code:
@@ -260,7 +292,10 @@ def _run(args, progress, cache_path: str) -> int:
     # metadata reads the endpoint settings off a client; every market's client
     # shares them, so the last one is as good as any - name it rather than
     # relying on the loop variable surviving.
-    meta = metadata(universe, clusters, egress, build_client(markets[0] if markets else ""))
+    asked_in = ", ".join(sorted({target_markets.language_for(code, args.hl)
+                                 for code in markets})) if markets else args.hl
+    meta = metadata(universe, clusters, egress,
+                    build_client(markets[0] if markets else ""), asked_in=asked_in)
     paths = write_all(args.out, universe, clusters, meta)
 
     progress(

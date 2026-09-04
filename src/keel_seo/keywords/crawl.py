@@ -29,6 +29,7 @@ import time
 from dataclasses import dataclass, field
 
 from .grammar import BRANCH, DRILL, SEED, expansions
+from .language import language_of
 from .proxying import normalize_country
 from .suggest import SuggestClient
 
@@ -54,6 +55,17 @@ WEIGHTS = {"rank": 0.10, "reach": 0.60, "relevance": 0.20, "depth": 0.10}
 
 _WORD = re.compile(r"[a-z0-9]+")
 
+# How many phrases must spell the seed a given way before that spelling is worth
+# a seed-tier expansion of its own. One occurrence is a typo Google echoed back;
+# a spelling people genuinely use turns up throughout the suggestions.
+MIN_VARIANT_USES = 3
+
+# How many alternative spellings a run will chase by default. Two is enough for
+# the case that motivated this - a brand written with and without a space - and
+# the ranking means the two kept are the two most used. More than a handful is
+# vanity: each one costs a full seed tier, and the tail is misspellings.
+DEFAULT_MAX_VARIANTS = 2
+
 
 def normalize(text: str) -> str:
     return " ".join(text.lower().split())
@@ -63,15 +75,71 @@ def seed_tokens(seed: str) -> tuple[str, ...]:
     return tuple(_WORD.findall(seed.lower()))
 
 
+def squash(text: str) -> str:
+    """The phrase with every separator removed: ``funding pips`` -> ``fundingpips``.
+
+    This is what lets one harvest cover a brand's spellings. People type
+    ``fundingpips``, ``funding pips`` and ``funding-pips`` for the same firm and
+    Google answers all three, but a seed matched against the spaced text only
+    recognises its own spelling and files the rest as contamination. Matching
+    against the squashed text recognises every spacing of the same letters.
+    """
+    return "".join(_WORD.findall(text.lower()))
+
+
 def contains_seed(phrase: str, tokens: tuple[str, ...]) -> bool:
     """True when every seed token appears somewhere in the phrase.
 
     Substring rather than whole-word, so ``quotexapk`` counts for the seed
     ``quotex``; order-independent, so ``calculator for pip value`` counts for the
-    seed ``pip value calculator``.
+    seed ``pip value calculator``; and against the squashed phrase, so ``funding
+    pips rules`` counts for the seed ``fundingpips``.
     """
-    haystack = normalize(phrase)
+    haystack = squash(phrase)
     return all(token in haystack for token in tokens)
+
+
+def seed_spelling(phrase: str, tokens: tuple[str, ...]) -> str:
+    """How this phrase spells the seed — ``funding pips`` inside a longer phrase.
+
+    Only meaningful for a one-token seed, which is the case that has variants
+    worth finding: a brand. It walks the text keeping a squashed index alongside,
+    so what comes back is the substring the searcher actually typed, spaces and
+    hyphens included, rather than a reconstruction of it.
+    """
+    if len(tokens) != 1:
+        return ""
+    needle = tokens[0]
+    text = normalize(phrase)
+    positions = [i for i, char in enumerate(text) if char.isalnum()]
+    joined = "".join(text[i] for i in positions)
+    at = joined.find(needle)
+    if at < 0:
+        return ""
+    return text[positions[at]:positions[at + len(needle) - 1] + 1]
+
+
+def discover_variants(universe, tokens: tuple[str, ...], canonical: str,
+                      limit: int) -> list[str]:
+    """The other spellings of the seed that Google itself keeps returning.
+
+    Deliberately read from the data rather than generated. Splitting
+    ``fundingpips`` into ``funding pips`` from the string alone needs a
+    dictionary and still guesses wrong on ``the5ers``; the suggestions already
+    contain whichever spellings are searched, and how often each appears is
+    exactly the ranking of which ones matter. Only the top `limit` are kept —
+    the tail of this list is typos, and every variant kept costs a full
+    seed-tier expansion.
+    """
+    if limit <= 0 or len(tokens) != 1:
+        return []
+    counted: dict[str, int] = {}
+    for text in universe.phrases:
+        spelling = seed_spelling(text, tokens)
+        if spelling and spelling != canonical:
+            counted[spelling] = counted.get(spelling, 0) + 1
+    ranked = sorted(counted.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [spelling for spelling, seen in ranked[:limit] if seen >= MIN_VARIANT_USES]
 
 
 @dataclass
@@ -96,6 +164,11 @@ class Phrase:
     # How many surface forms this keyword absorbed, e.g. "quotex ai trading bot"
     # standing for the four orderings Google also returns. 1 means it was unique.
     variants: int = 1
+    # The absorbed forms themselves, highest priority first. The count alone said
+    # a keyword had been typed three ways without saying which three, which is
+    # the half a reader needs: "funding pips rules" sitting under "fundingpips
+    # rules" is the evidence that both spellings are searched.
+    also_written: list = field(default_factory=list)
 
     @property
     def market(self) -> str:
@@ -128,6 +201,8 @@ class Phrase:
             "level": self.first_level,
             "words": self.words,
             "variants": self.variants,
+            "also_written": list(self.also_written),
+            "language": language_of(self.text),
             "market": self.market,
             "markets": dict(sorted(self.markets.items(), key=lambda kv: kv[1])),
             "cluster": self.cluster,
@@ -139,6 +214,11 @@ class Universe:
     """The result of one crawl: the phrases, what was rejected, and how it ran."""
 
     seed: str
+    # The other spellings of the seed this run crawled — "funding pips" for the
+    # seed "fundingpips". They are part of the universe's identity, not a
+    # diagnostic: the clustering has to know them, or one keyword typed two ways
+    # lands in two topics.
+    variants: tuple[str, ...] = ()
     phrases: dict[str, Phrase] = field(default_factory=dict)
     off_seed: dict[str, int] = field(default_factory=dict)
     # Which exits answered this run, as a diagnostic on the pool - never a
@@ -177,6 +257,16 @@ def merge_markets(seed: str, per_market: dict) -> Universe:
     """
     merged = Universe(seed=seed)
     merged.market = " ".join(sorted(per_market))
+    # Spellings are a property of the seed, not of a market, but each market
+    # discovers them independently and may find one the others missed. The union
+    # is what the clustering needs, so one keyword typed two ways stays one
+    # keyword no matter which market surfaced which spelling.
+    spellings: list[str] = []
+    for code in sorted(per_market):
+        for spelling in per_market[code].variants:
+            if spelling not in spellings:
+                spellings.append(spelling)
+    merged.variants = tuple(spellings)
     for code in sorted(per_market):
         universe = per_market[code]
         merged.queries_asked += universe.queries_asked
@@ -226,6 +316,8 @@ def crawl(
     tight: bool = True,
     wildcards: bool = False,
     max_seconds: float = 0.0,
+    variants: tuple[str, ...] = (),
+    max_variants: int = DEFAULT_MAX_VARIANTS,
     progress=None,
 ) -> Universe:
     """Expand `seed` until it stops yielding, or a stated limit is reached.
@@ -240,10 +332,15 @@ def crawl(
     """
     started = time.time()
     tokens = seed_tokens(seed)
-    universe = Universe(seed=seed)
+    canonical = normalize(seed)
+    given = [normalize(v) for v in variants if normalize(v) != canonical]
+    universe = Universe(seed=seed, variants=tuple(given))
     asked: set[str] = set()
     expanded: set[str] = set()
-    frontier = [normalize(seed)]
+    # Every spelling the caller named is a seed in its own right, expanded with
+    # the full seed grammar. Spellings the crawl discovers for itself join after
+    # the first level, once the data says which ones people use.
+    frontier = [canonical] + given
 
     def announce(message: str) -> None:
         if progress:
@@ -318,6 +415,22 @@ def crawl(
         expanded.update(frontier)
         announce(f"level {level}: {len(frontier)} term(s) -> {len(queries)} queries")
         responses = run(queries, level)
+
+        # The seed's own spellings, asked before drilling so the drill covers
+        # them too. This happens after level 0 and only once: by then Google has
+        # said which spellings it returns, and asking any later would leave a
+        # whole spelling of the brand with no seed-tier expansion of its own.
+        if level == 0 and not universe.blocked and not out_of_time():
+            found = discover_variants(universe, tokens, canonical, max_variants)
+            found = [v for v in found if v not in expanded]
+            if found:
+                universe.variants = tuple(list(universe.variants) + found)
+                announce(f"  seed also spelled: {', '.join(found)}")
+                expanded.update(found)
+                responses = responses + run(
+                    [q for term in found
+                     for q in expansions(term, SEED, tight=tight, wildcards=wildcards)],
+                    level)
 
         # Go deeper only underneath the queries Google truncated. A short answer
         # means that corner of the space is already fully reported.

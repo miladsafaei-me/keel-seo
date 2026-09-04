@@ -21,7 +21,16 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
   gate; `guarded_prefixes` since v0.7.1), `keel_seo.keywords` (since v0.12.0: the
   market-side half — an autocomplete-only keyword-universe crawler, its lexical
   clustering and its priority score; no key, no model, see README's "Keyword
-  universe" section). **A harvest never asks from the machine running it** —
+  universe" section). Since v0.29.0 it also owns three defaults a consumer would
+  otherwise re-invent: a seed's **other spellings** are crawled and clustered as
+  one keyword (`crawl.squash`/`discover_variants` + the variant-aware `drop` set
+  in `cluster.build`), the **target markets** are a package default of sixteen
+  countries each paired with the language it searches in (`keywords/markets.py`,
+  overridable per project with `KEEL_SEO["keyword_markets"]`, the
+  `KEEL_SEO_KEYWORD_MARKETS` env var, or `--markets`), and every keyword's
+  **language** is named deterministically (`keywords/language.py` — script,
+  vocabulary, then diacritics; never a model, and never a guess where the
+  evidence is a shared accent). **A harvest never asks from the machine running it** —
   since v0.28.0 `--proxies auto` is the default and `--proxies off` is refused
   with no override, in the single-seed CLI and the batch walker alike, because
   Google's block is IP-wide and outlasts the run (measured 2026-09-04: refused

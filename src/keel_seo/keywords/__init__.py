@@ -22,6 +22,10 @@ The pieces, in the order the CLI uses them:
   egress probe that gives a harvest its only real geography label.
 * :mod:`keel_seo.keywords.proxying` — the egress rule, and the seam to
   keel-crawler's rotating pool that satisfies it.
+* :mod:`keel_seo.keywords.markets` — which countries a harvest asks, and the
+  language each one is asked in.
+* :mod:`keel_seo.keywords.language` — which language a keyword is in, from its
+  script, its vocabulary or its accents. No model.
 * :mod:`keel_seo.keywords.grammar` — the attachments that surround a term.
 * :mod:`keel_seo.keywords.crawl` — the breadth-first walk and the priority score.
 * :mod:`keel_seo.keywords.cluster` — IDF-weighted lexical clustering and
@@ -31,6 +35,13 @@ The pieces, in the order the CLI uses them:
 No API key, and the analysis itself is standard library only. A real harvest
 additionally needs the rotating pool, which is one install away:
 ``pip install 'keel-seo[proxies]'``.
+
+Three things a caller does not have to remember. **A seed's spellings are one
+seed**: ``fundingpips`` and ``funding pips`` are crawled together, land in one
+file and cluster as one keyword. **A harvest asks the project's target markets**
+— sixteen countries by default, each in the language it searches in — rather than
+whichever one the caller typed. And **every keyword carries its language**, so a
+sixteen-country file separates rather than blurs.
 
 The hard limit, stated once here and repeated in every output: **autocomplete
 never returns search volume.** Everything this package produces describes the

@@ -15,8 +15,10 @@ from pathlib import Path
 from keel_seo.keywords import cluster as clustering
 from keel_seo.keywords import harvest, report, sync
 from keel_seo.keywords import language
+from keel_seo.keywords import markets as target_markets
 from keel_seo.keywords.crawl import (Phrase, Universe, contains_seed, crawl,
-                                     merge_markets, score, seed_tokens)
+                                     discover_variants, merge_markets, score,
+                                     seed_spelling, seed_tokens, squash)
 from keel_seo.keywords.grammar import (BRANCH, DRILL, SEED, expansions,
                                        star_variants)
 from keel_seo.keywords.proxying import (DIRECT_REFUSAL, DirectEgressRefused,
@@ -810,6 +812,178 @@ class TheSyncFileList(unittest.TestCase):
     def test_the_response_cache_is_not_a_harvest_format(self):
         self.assertNotIn("jsonl", sync.FORMATS)
         self.assertEqual(set(sync.FORMATS), {"xlsx", "json", "csv", "md"})
+
+
+class OneSeedManySpellings(unittest.TestCase):
+    """`fundingpips` and `funding pips` are one brand, so they are one harvest.
+
+    Before this, a seed matched against the spaced phrase recognised only its own
+    spelling: a `fundingpips` run filed every `funding pips ...` suggestion as
+    contamination, and the two spellings of one keyword — when both did get in —
+    described different topics and landed in different clusters.
+    """
+
+    def test_the_spaced_spelling_is_no_longer_contamination(self):
+        tokens = seed_tokens("fundingpips")
+        self.assertTrue(contains_seed("funding pips rules", tokens))
+        self.assertTrue(contains_seed("funding-pips payout", tokens))
+        self.assertTrue(contains_seed("fundingpips rules", tokens))
+        self.assertFalse(contains_seed("funded next rules", tokens))
+
+    def test_a_multi_word_seed_still_matches_in_any_order(self):
+        tokens = seed_tokens("pip value calculator")
+        self.assertTrue(contains_seed("calculator for pip value", tokens))
+        self.assertFalse(contains_seed("pip calculator", tokens))
+
+    def test_squash_removes_every_separator(self):
+        self.assertEqual(squash("Funding-Pips  Rules"), "fundingpipsrules")
+
+    def test_the_spelling_a_phrase_uses_is_read_back_from_it(self):
+        tokens = seed_tokens("fundingpips")
+        self.assertEqual(seed_spelling("funding pips rules", tokens), "funding pips")
+        self.assertEqual(seed_spelling("best fundingpips deal", tokens), "fundingpips")
+        # A multi-word seed has no single spelling to extract, and guessing one
+        # would name a span that is not the seed.
+        self.assertEqual(seed_spelling("calculator for pip value",
+                                       seed_tokens("pip value calculator")), "")
+
+    def test_only_spellings_google_keeps_returning_are_chased(self):
+        universe = Universe(seed="fundingpips")
+        for text in ("funding pips review", "funding pips rules",
+                     "funding pips payout", "fundingpips login"):
+            universe.phrases[text] = Phrase(text, 1, 600, 0)
+        universe.phrases["funding-pips x"] = Phrase("funding-pips x", 1, 600, 0)
+
+        found = discover_variants(universe, seed_tokens("fundingpips"),
+                                  "fundingpips", limit=2)
+        self.assertEqual(found, ["funding pips"],
+                         "one sighting of 'funding-pips' is a typo, not a spelling")
+
+    def test_both_spellings_of_one_keyword_share_one_cluster(self):
+        universe = Universe(seed="fundingpips", variants=("funding pips",))
+        for text in ("fundingpips rules", "funding pips rules",
+                     "fundingpips payout", "funding pips payout",
+                     "fundingpips payout speed"):
+            universe.phrases[text] = Phrase(text, 1, 600, 0)
+        score(universe)
+
+        clusters = clustering.build(universe, topics=5, min_anchor=1)
+        placed = {p.text: c.index for c in clusters for p in c.members}
+        collapsed = {p.text: p.also_written for c in clusters for p in c.members}
+
+        self.assertEqual(len(placed), 3, "each keyword should survive once")
+        self.assertIn("rules", [c.label for c in clusters])
+        # The two spellings of "rules" are one keyword, and the row says so.
+        head = next(t for t in collapsed if t.endswith("rules"))
+        self.assertEqual(collapsed[head], [
+            "funding pips rules" if head == "fundingpips rules" else "fundingpips rules"
+        ])
+
+    def test_without_the_variant_the_spellings_would_split(self):
+        """The witness for the fix: the same phrases, with no variant declared."""
+        universe = Universe(seed="fundingpips")
+        for text in ("fundingpips rules", "funding pips rules"):
+            universe.phrases[text] = Phrase(text, 1, 600, 0)
+        score(universe)
+
+        clusters = clustering.build(universe, topics=5, min_anchor=1)
+        keywords = [p.text for c in clusters for p in c.members]
+        self.assertEqual(len(keywords), 2,
+                         "unknown spelling: they stay two keywords, which is the "
+                         "behaviour the variant list exists to fix")
+
+    def test_markets_merge_the_spellings_each_of_them_found(self):
+        us = Universe(seed="fundingpips", variants=("funding pips",))
+        us.phrases["fundingpips rules"] = Phrase("fundingpips rules", 1, 600, 0)
+        de = Universe(seed="fundingpips", variants=("funding-pips",))
+        de.phrases["fundingpips regeln"] = Phrase("fundingpips regeln", 1, 600, 0)
+
+        merged = merge_markets("fundingpips", {"US": us, "DE": de})
+        self.assertEqual(sorted(merged.variants), ["funding pips", "funding-pips"])
+
+
+class TheTargetMarkets(unittest.TestCase):
+    """Sixteen countries, each asked in the language it searches in."""
+
+    def test_the_default_list_is_the_sixteen_target_countries(self):
+        self.assertEqual(list(target_markets.TARGET_MARKETS), [
+            "US", "CA", "DE", "FR", "ES", "PT", "BR", "AR",
+            "IN", "PK", "ZA", "NG", "KE", "PH", "MY", "ID"])
+
+    def test_a_market_is_asked_in_the_language_it_searches_in(self):
+        self.assertEqual(target_markets.language_for("BR"), "pt")
+        self.assertEqual(target_markets.language_for("DE"), "de")
+        self.assertEqual(target_markets.language_for("ID"), "id")
+        # English is not a fallback here, it is the answer: these markets search
+        # in English, and asking them in a local language returns a smaller and
+        # less commercial universe than the one their searchers use.
+        for code in ("IN", "PK", "NG", "KE", "ZA", "PH", "MY"):
+            self.assertEqual(target_markets.language_for(code), "en", code)
+
+    def test_an_explicit_language_wins_everywhere(self):
+        self.assertEqual(target_markets.language_for("BR", "en"), "en")
+
+    def test_a_list_can_be_written_any_way_a_person_would_write_it(self):
+        self.assertEqual(target_markets.parse("us, in br"), ["US", "IN", "BR"])
+        self.assertEqual(target_markets.parse("us,us,in"), ["US", "IN"])
+        self.assertEqual(target_markets.parse("target"),
+                         list(target_markets.TARGET_MARKETS))
+        self.assertEqual(target_markets.parse(""), [])
+
+    def test_a_country_name_is_not_a_country_code(self):
+        with self.assertRaises(target_markets.UnknownMarket):
+            target_markets.parse("usa")
+
+    def test_the_project_can_override_the_default(self):
+        os.environ[target_markets.ENV_NAME] = "us,de"
+        try:
+            self.assertEqual(target_markets.resolve(), ["US", "DE"])
+            self.assertEqual(target_markets.resolve("br"), ["BR"],
+                             "the command line beats the project setting")
+        finally:
+            del os.environ[target_markets.ENV_NAME]
+        self.assertEqual(target_markets.resolve(), list(target_markets.TARGET_MARKETS))
+
+    def test_the_cli_defers_the_default_instead_of_owning_it(self):
+        from keel_seo.keywords.__main__ import build_parser
+
+        self.assertIsNone(build_parser().parse_args(["quotex"]).markets,
+                          "a default here would shadow the project's setting")
+
+
+class TheLanguageColumn(unittest.TestCase):
+    """Which language, not merely "not English" — and with no model."""
+
+    def test_script_names_the_language_outright(self):
+        self.assertEqual(language.language_of("ftmo क्या है"), "Hindi")
+        self.assertEqual(language.language_of("ftmo отзывы"), "Russian")
+        self.assertEqual(language.language_of("ftmo 후기"), "Korean")
+
+    def test_vocabulary_names_it_when_the_letters_cannot(self):
+        self.assertEqual(language.language_of("ftmo erfahrungen"), "German")
+        self.assertEqual(language.language_of("ftmo opiniones"), "Spanish")
+        self.assertEqual(language.language_of("ftmo corretora saque"), "Portuguese")
+        self.assertEqual(language.language_of("ftmo cara daftar"), "Indonesian")
+
+    def test_a_telling_letter_names_it_when_no_word_does(self):
+        self.assertEqual(language.language_of("ftmo español"), "Spanish")
+        self.assertEqual(language.language_of("ftmo avaliação"), "Portuguese")
+
+    def test_a_shared_accent_is_reported_as_unnamed_rather_than_guessed(self):
+        language_name, why = language.identify("ftmo café")
+        self.assertEqual(language_name, language.UNDETERMINED)
+        self.assertEqual(why, language.DIACRITIC)
+
+    def test_english_stays_english(self):
+        for text in ("ftmo review", "quotex com login", "quotex dao download",
+                     "fundingpips payout speed"):
+            self.assertEqual(language.language_of(text), language.ENGLISH, text)
+            self.assertEqual(language.non_english_reason(text), "")
+
+    def test_the_evidence_travels_with_the_verdict(self):
+        language_name, why = language.identify("ftmo erfahrungen")
+        self.assertEqual(language_name, "German")
+        self.assertIn("erfahrungen", why)
 
 
 class TheEgressRule(unittest.TestCase):

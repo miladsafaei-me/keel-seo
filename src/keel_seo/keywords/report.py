@@ -21,13 +21,13 @@ import os
 
 from .cluster import Cluster
 from .crawl import Universe
-from .language import non_english_reason
+from .language import identify, language_of, non_english_reason
 
 CONTAMINATION_SAMPLE = 40
 
 
 def metadata(universe: Universe, clusters: list[Cluster], egress: dict,
-             client) -> dict:
+             client, asked_in: str = "") -> dict:
     pool = getattr(client, "pool", None)
     # Clustering collapses word-order variants and plurals, so the number of
     # KEYWORDS is smaller than the number of raw phrases returned. Reporting the
@@ -36,12 +36,25 @@ def metadata(universe: Universe, clusters: list[Cluster], egress: dict,
     keywords = sum(len(c.members) for c in clusters)
     foreign = sum(1 for c in clusters for p in c.members
                   if non_english_reason(p.text))
+    # How the harvest divides by language, biggest first. With sixteen markets in
+    # five languages this is the shape of the file, and a reader who cannot see it
+    # in the summary discovers it by scrolling.
+    spoken: dict[str, int] = {}
+    for cluster in clusters:
+        for phrase in cluster.members:
+            name = language_of(phrase.text)
+            spoken[name] = spoken.get(name, 0) + 1
     return {
         "seed": universe.seed,
+        # Every spelling of the seed this run treated as the same thing.
+        "seed_variants": list(getattr(universe, "variants", ())),
         "harvested_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": "google-autocomplete",
         "endpoint_client": client.client,
-        "language": client.hl,
+        # What each market was asked in, not one language standing for all of
+        # them: a sixteen-market run asks in five.
+        "language": asked_in or client.hl,
+        "languages_found": dict(sorted(spoken.items(), key=lambda kv: -kv[1])),
         # The markets deliberately asked for, which is the only thing that makes
         # a per-keyword market claim meaningful. Empty means none was asked.
         "markets": universe.market,
@@ -242,10 +255,19 @@ COLUMN_MEANINGS = (
                 "shared. This is the column to read for 'who searches this'."),
     ("Variants", "How many ways the same keyword was typed, merged into this one "
                  "row. 1 means it was only seen one way."),
-    ("Non-English", "Keywords that are not in English, on their own sheet with the "
-                    "reason each was flagged. Script and accented letters are "
-                    "certain; a flagged word is a judgement you can check, since "
-                    "the word itself is shown."),
+    ("Also written", "The other ways it was typed - a different word order, or a "
+                     "different spelling of the brand such as 'funding pips' "
+                     "beside 'fundingpips'. They are one keyword, so they share "
+                     "one row and one cluster."),
+    ("Language", "The language of the keyword, worked out from its script, its "
+                 "vocabulary or its accented letters - no model involved. English "
+                 "is the default answer when nothing says otherwise, and "
+                 "'non-English' alone means an accent proved it is not English "
+                 "without naming which language it is."),
+    ("Non-English", "Keywords that are not in English, on their own sheet grouped "
+                    "by language, with the reason each was flagged. Script and "
+                    "accented letters are certain; a flagged word is a judgement "
+                    "you can check, since the word itself is shown."),
     ("Intent", "What the searcher wants: reach a page (navigational), learn "
                "something (informational), compare before buying (commercial), act "
                "now (transactional), or simply the brand."),
@@ -301,20 +323,22 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
     clusters_sheet = book.create_sheet("Clusters")
     keywords = book.create_sheet("Keywords")
 
-    keywords.append(["Priority", "Keyword", "Market", "Markets", "Cluster",
-                     "Cluster label", "Intent", "Best rank", "Reach", "Relevance",
-                     "Level", "Words", "Variants"])
+    keywords.append(["Priority", "Keyword", "Language", "Market", "Markets",
+                     "Cluster", "Cluster label", "Intent", "Best rank", "Reach",
+                     "Relevance", "Level", "Words", "Variants", "Also written"])
     # Remember where each cluster starts so the Clusters sheet can link to it.
     first_row: dict[int, int] = {}
     for cluster in clusters:
         first_row[cluster.index] = keywords.max_row + 1
         for phrase in cluster.members:
-            keywords.append([round(phrase.priority, 1), phrase.text, phrase.market,
+            keywords.append([round(phrase.priority, 1), phrase.text,
+                             language_of(phrase.text), phrase.market,
                              " ".join(sorted(phrase.markets)),
                              cluster.index, cluster.label, cluster.intent,
                              phrase.best_rank, phrase.reach, phrase.max_relevance,
-                             phrase.first_level, phrase.words, phrase.variants])
-    style_header(keywords, [9, 52, 8, 14, 9, 30, 15, 11, 8, 11, 8, 8, 9])
+                             phrase.first_level, phrase.words, phrase.variants,
+                             "; ".join(phrase.also_written)])
+    style_header(keywords, [9, 52, 16, 8, 14, 9, 30, 15, 11, 8, 11, 8, 8, 9, 52])
     keywords.freeze_panes = "A2"
     keywords.auto_filter.ref = keywords.dimensions
 
@@ -365,6 +389,11 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
         ("Non-English keywords",
          f"{meta.get('non_english', 0):,} ({meta.get('non_english_share', 0):.1f}% "
          "— listed on their own sheet)"),
+        ("Languages found", ", ".join(
+            f"{name} {count:,}"
+            for name, count in list(meta.get("languages_found", {}).items())[:8])),
+        ("Seed also spelled", ", ".join(meta.get("seed_variants", []))
+         or "no other spelling was returned"),
         ("Harvested (UTC)", meta.get("harvested_at", "")),
         ("Source", "Google autocomplete only"),
         ("Market / geography", geography),
@@ -393,17 +422,21 @@ def write_xlsx(path: str, universe: Universe, clusters: list[Cluster],
             cell.font = header_font
             cell.fill = header_fill
 
-    foreign = [(p, cluster, non_english_reason(p.text))
+    foreign = [(p, cluster) + identify(p.text)
                for cluster in clusters for p in cluster.members
                if non_english_reason(p.text)]
     if foreign:
         sheet = book.create_sheet("Non-English")
-        sheet.append(["Priority", "Keyword", "Market", "Why", "Cluster label",
-                      "Intent", "Reach"])
-        for phrase, cluster, reason in sorted(foreign, key=lambda f: -f[0].priority):
-            sheet.append([round(phrase.priority, 1), phrase.text, phrase.market,
-                          reason, cluster.label, cluster.intent, phrase.reach])
-        style_header(sheet, [9, 52, 9, 30, 26, 15, 8])
+        sheet.append(["Language", "Priority", "Keyword", "Market", "Why",
+                      "Cluster label", "Intent", "Reach"])
+        # Grouped by language, then by priority inside it: this sheet is read one
+        # market's language at a time, not as a single ranked list.
+        for phrase, cluster, name, reason in sorted(
+                foreign, key=lambda f: (f[2], -f[0].priority)):
+            sheet.append([name, round(phrase.priority, 1), phrase.text,
+                          phrase.market, reason, cluster.label, cluster.intent,
+                          phrase.reach])
+        style_header(sheet, [16, 9, 52, 9, 30, 26, 15, 8])
         sheet.freeze_panes = "A2"
         sheet.auto_filter.ref = sheet.dimensions
 

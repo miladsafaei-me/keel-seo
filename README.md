@@ -506,8 +506,8 @@ One source only: Google's autocomplete endpoint, keyless and free.
 
 ```bash
 pip install 'keel-seo[proxies]'                            # required, see below
-python -m keel_seo.keywords quotex --out ./keywords
-python -m keel_seo.keywords quotex --markets us,in,br      # one crawl per market
+python -m keel_seo.keywords fundingpips --out ./keywords    # the 16 target markets
+python -m keel_seo.keywords fundingpips --markets us,in,br  # or just these three
 python -m keel_seo.keywords "pip value calculator" --levels 2 --rate 5
 ```
 
@@ -527,9 +527,92 @@ summary of where the data came from and how complete it is, plus an explanation
 of what every scored column means (the volume caveat lives inside the Priority
 entry, where a reader is actually looking); then **Clusters**, the map, one row
 per topic with **every row hyperlinked to its own keywords**; then **Keywords**,
-the working sheet, frozen header and autofilter; then **Off-seed** for the
-contamination check. The workbook needs
+the working sheet, frozen header and autofilter; then **Non-English**, grouped by
+language; then **Off-seed** for the contamination check. The workbook needs
 `pip install 'keel-seo[xlsx]'`; the other three are stdlib and always written.
+
+### One seed, every spelling of it
+
+`fundingpips` and `funding pips` are one brand and one universe, so they are one
+harvest. A run crawls the seed, then the spellings Google itself keeps returning,
+and merges everything into a single file where the two spellings of a keyword are
+**one row in one cluster** — with the other spellings named in *Also written*,
+because a reader needs to know both forms are searched.
+
+This used to fail twice over. A `fundingpips` run matched its seed against the
+spaced phrase, so every `funding pips …` suggestion was filed as contamination
+and thrown away; and when both forms did get in, `fundingpips rules` had no
+content words left after the seed was dropped while `funding pips rules` kept
+`funding` and `pips`, so one keyword described two topics and landed in two
+clusters.
+
+Both halves are fixed by the same idea — compare the letters, not the spacing:
+
+- **Matching** squashes the phrase before testing it, so `funding-pips payout`
+  counts for the seed `fundingpips`. Multi-word seeds keep matching in any order,
+  so `calculator for pip value` still counts for `pip value calculator`.
+- **Discovery** reads the spellings back out of the suggestions rather than
+  generating them: splitting `fundingpips` from the string alone needs a
+  dictionary and guesses wrong on `the5ers`, while Google's own answers already
+  contain whichever spellings people type, and how often each appears is the
+  ranking of which ones matter. A spelling needs **three** sightings to earn a
+  full seed-tier expansion; the top **two** are chased (`--max-variants`), because
+  the tail of that list is typos. `--variants "funding pips"` names one outright.
+- **Clustering** drops every spelling of the seed, not just the canonical one, so
+  the two forms produce the same content words and collapse into one keyword.
+
+### Target markets: sixteen countries, each in its own language
+
+A harvest asks the **project's target markets**, not whichever country the caller
+happened to type. The default list is sixteen countries chosen for this line of
+work, and each carries the language its search is actually conducted in:
+
+| | | | |
+|---|---|---|---|
+| US · en | CA · en | DE · de | FR · fr |
+| ES · es | PT · pt | BR · pt | AR · es |
+| IN · en | PK · en | ZA · en | NG · en |
+| KE · en | PH · en | MY · en | ID · id |
+
+The language pairing is not decoration. Asking Brazil in English returns the
+small English slice of Brazilian demand and labels it Brazil; asking it with
+`hl=pt` returns the Portuguese half that is most of it. Where English *is* the
+language of search — India, Pakistan, Nigeria, Kenya, South Africa, the
+Philippines, Malaysia — the table says so on purpose, because asking those
+markets in a local language returns a smaller and less commercial universe than
+their searchers actually use.
+
+Precedence, and it is the same as every other knob here — the command line beats
+the project, the project beats the default:
+
+```bash
+python -m keel_seo.keywords ftmo                     # the sixteen
+python -m keel_seo.keywords ftmo --markets us,de     # just these
+python -m keel_seo.keywords ftmo --markets target    # the list, named explicitly
+python -m keel_seo.keywords ftmo --markets '' --hl en   # ask no market at all
+```
+
+A Django host sets its own list with `KEEL_SEO["keyword_markets"]`; anything else
+sets `KEEL_SEO_KEYWORD_MARKETS` in the environment. Both take the same shape as
+`--markets`. Cost scales with the list: sixteen markets is sixteen crawls, and
+the throughput ceiling is the proxy pool's, not the throttle's.
+
+### Which language each keyword is in
+
+Every keyword carries a **Language** column — `English`, `German`, `Portuguese`,
+`Hindi` — and the non-English ones also get their own sheet, grouped by language.
+No model, no dependency, no network: three tests in descending order of
+certainty, each answer carrying the evidence that produced it.
+
+**Script** names the language outright (Devanagari, Cyrillic, Arabic, Han,
+Hangul, Thai). **Marker words** name it when the letters cannot: vocabulary that
+is common in one language and is not an English word, a brand fragment or a
+domain part — a list kept deliberately narrow, because `com` once matched
+`quotex com login` and `dao` once matched `quotex dao download`. Where Spanish
+and Portuguese share a word, the language with more markers in that phrase wins
+and a surviving tie is reported as the pair. **Diacritics** are the last tier:
+`ñ` is Spanish, `ß` German, `ã` Portuguese, while a shared accent with no marker
+word is reported honestly as `non-English` rather than guessed.
 
 ### How one seed becomes a universe
 
@@ -651,10 +734,10 @@ ordering, how many independent expansions surfaced a phrase, its relevance score
 its depth — and every output file says so in its own header. Do not present it as
 a volume estimate.
 
-**Its geography is asked for, not inferred.** `--markets us,in,br` runs one crawl
-per market, asking Google as that market with `gl=`, and merges the results with
-per-market evidence on every keyword: `Market` is where it ranks best, `Markets`
-lists every market that returned it. The default is `us`.
+**Its geography is asked for, not inferred.** Each market is a separate crawl,
+asking Google as that market with `gl=`, and the results merge with per-market
+evidence on every keyword: `Market` is where it ranks best, `Markets` lists every
+market that returned it. The default is the sixteen target markets above.
 
 This corrects a claim that stood in this README for two days — that `gl=` was
 inert and returned byte-identical results. Re-measured on 2026-09-03 across four
@@ -807,4 +890,7 @@ the need it answers so a competitor cannot be written unnoticed (v0.7.1). v0.12.
 keyword-universe crawling, lexical clustering and priority ranking, with no key, no
 dependency and no model. v0.28.0 makes rotation that crawler's only egress — asking
 Google from the machine running the harvest is refused, because the block it earns
-is IP-wide and costs the whole host its access.
+is IP-wide and costs the whole host its access. v0.29.0 makes a harvest cover the
+seed's other spellings in one file and one cluster, asks the project's sixteen
+target markets each in the language it searches in, and names every keyword's
+language in its own column.
