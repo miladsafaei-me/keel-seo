@@ -176,6 +176,15 @@ def discover_variants(universe, tokens: tuple[str, ...], canonical: str,
     return [spelling for spelling, seen in ranked[:limit] if seen >= MIN_VARIANT_USES]
 
 
+# Exit status for "the output is written and sound, but the universe is not
+# closed". Deliberately not 1: a caller must be able to tell a harvest that
+# delivered an incomplete universe from one that delivered nothing at all,
+# because the first is resumed and the second is investigated. It lives beside
+# Universe.blocked, which is the flag it reports, so the CLI and the batch walker
+# read one definition instead of agreeing on a number.
+INCOMPLETE = 2
+
+
 @dataclass
 class Phrase:
     """One harvested phrase and every signal the crawl learned about it."""

@@ -5,10 +5,11 @@ import argparse
 import contextlib
 import os
 import sys
+import time
 
 from . import cluster as clustering
 from . import markets as target_markets
-from .crawl import (DEFAULT_MAX_VARIANTS, PROBE_NOVELTY_FLOOR,
+from .crawl import (DEFAULT_MAX_VARIANTS, INCOMPLETE, PROBE_NOVELTY_FLOOR,
                     PROBE_NOVELTY_SHARE, PROBE_QUERIES, crawl, merge_markets,
                     probe_market, worth_crawling)
 from .markets import ENV_NAME as MARKET_ENV, SETTING_NAME as MARKET_SETTING
@@ -25,6 +26,40 @@ from .suggest import DEFAULT_RATE, SuggestCache, SuggestClient
 # to be: surplus workers block harmlessly in acquire(), while a shortfall leaves
 # verified addresses idle and is the difference between 0.4 and 30 queries/second.
 POOLED_WORKERS = 120
+
+# How many times a rate-limited crawl is picked up and continued before the run
+# gives up and says so. Google answers 403 for "too much", the client latches
+# after BLOCK_LIMIT of them, and the crawl then stops and keeps what it has —
+# correct, and until now the end of the story: the run wrote a workbook, exited
+# 0, and every caller read that as a finished universe. The `binary option`
+# harvest of 2026-09-05 ended that way with 19,315 phrases never expanded, and
+# nothing in the output's own filename or exit status said so.
+#
+# A resume is cheap and it is not a retry of failed work: every query already
+# asked comes back from the response cache, so an attempt pays only for the
+# queries the block prevented. The measured replay of a 380k-request run was
+# about twelve minutes.
+#
+# TWO GUARDS, because an unbounded resume against an endpoint that has decided to
+# refuse us is a closed loop that burns the proxy pool for nothing:
+#
+#   1. this count, and
+#   2. an attempt that finds NOTHING NEW ends the resume immediately, whatever
+#      is left of the count. That is precisely what a block that has not lifted
+#      looks like from here — the replay runs off the cache, reaches the same
+#      frontier, is refused at the same place and returns the same universe.
+#
+# The second guard is the one that matters. The count alone would still spend
+# three full attempts on an endpoint that was never going to answer; the
+# no-progress test spends one, and it is free.
+DEFAULT_RESUME_ATTEMPTS = 2
+
+# Waited out before a resume attempt. A block is a decision the endpoint made
+# about our traffic, not a flaky connection, and asking again straight away only
+# deepens it (the same reasoning as suggest.BLOCK_BACKOFF, one level up). It is
+# also what gives the published proxy lists time to move on, which is where the
+# addresses that are not blocked come from.
+DEFAULT_RESUME_COOLDOWN = 300.0
 # How deep a market that is not the primary is crawled. One, not the caller's
 # --levels, and the difference is most of a run's cost.
 #
@@ -188,6 +223,20 @@ def build_parser() -> argparse.ArgumentParser:
                               "write everything found (0 = no deadline). Always "
                               "prefer this to an external timeout, which kills the "
                               "run between levels and loses the whole harvest"))
+    parser.add_argument("--resume-attempts", type=int, default=DEFAULT_RESUME_ATTEMPTS,
+                        help=(f"if Google rate-limits the crawl, resume it up to this "
+                              f"many times (default {DEFAULT_RESUME_ATTEMPTS}; 0 "
+                              "disables). A resume refills the proxy pool and crawls "
+                              "again with a fresh client; the response cache replays "
+                              "everything already asked, so it costs only the queries "
+                              "the block prevented. It stops early the moment an "
+                              "attempt finds nothing new, which is what a block that "
+                              "has not lifted looks like"))
+    parser.add_argument("--resume-cooldown", type=float, default=DEFAULT_RESUME_COOLDOWN,
+                        help=(f"seconds to wait before a resume attempt (default "
+                              f"{DEFAULT_RESUME_COOLDOWN:g}). Retrying a block "
+                              "immediately only deepens it, and the wait is also what "
+                              "lets the published proxy lists move on"))
     parser.add_argument("--quiet", action="store_true")
     return parser
 
@@ -332,6 +381,68 @@ def _run(args, progress, cache_path: str) -> int:
             progress=progress,
         )
 
+    started_at = time.time()
+
+    def out_of_budget() -> bool:
+        """Whether the seed has already spent the deadline it was given.
+
+        --max-seconds is the crawler's per-market deadline and each attempt
+        restarts it, so attempts alone would let a resumed market run for
+        attempts x deadline. This holds the whole seed to the deadline instead:
+        once it is spent, what is on the table is what gets written.
+        """
+        return bool(args.max_seconds) and (time.time() - started_at) >= args.max_seconds
+
+    def crawl_until_closed(code: str, variants: tuple[str, ...],
+                           levels: int | None = None):
+        """One market, crawled and then resumed for as long as resuming pays.
+
+        Returns the FULLEST universe seen, never simply the last one. A resume
+        that is refused early comes back smaller than the attempt before it —
+        the walk restarts at level 0 and is cut off sooner — and taking the last
+        one would hand back less than was already collected.
+        """
+        best = full_crawl(code, variants, levels)
+        where = f"market {code}: " if code else ""
+        for attempt in range(1, max(0, args.resume_attempts) + 1):
+            if not best.blocked or not best.unexpanded:
+                break
+            if out_of_budget():
+                progress(f"{where}rate-limited with {best.unexpanded:,} phrases "
+                         "unexpanded, and the deadline is spent — not resuming")
+                break
+            progress(f"{where}rate-limited with {best.unexpanded:,} phrases "
+                     f"unexpanded — resume {attempt} of {args.resume_attempts} "
+                     f"in {args.resume_cooldown:g}s")
+            time.sleep(args.resume_cooldown)
+            # Fresh addresses are the whole point: the pool that just earned the
+            # block is mostly retired by now, and refill_once() re-reads the
+            # published lists before verifying, so it can return addresses that
+            # were not on them when the run began.
+            try:
+                added = pool.refill_once()
+                progress(f"{where}resume {attempt}: pool refilled with {added} "
+                         f"address(es), {len(pool)} live")
+            except Exception as exc:  # noqa: BLE001 - a refill must not end the run
+                progress(f"{where}resume {attempt}: pool refill failed ({exc}); "
+                         "continuing with what is live")
+            if not len(pool):
+                progress(f"{where}resume {attempt}: no live address left to ask "
+                         "from — stopping")
+                break
+            # A new client, so the block latch starts clear; the cache is shared,
+            # so everything already asked replays for free.
+            again = full_crawl(code, variants, levels)
+            if len(again.phrases) <= len(best.phrases):
+                progress(f"{where}resume {attempt} found nothing new "
+                         f"({len(again.phrases):,} phrases) — the block has not "
+                         "lifted, and asking again would only spend the pool")
+                break
+            progress(f"{where}resume {attempt}: {len(best.phrases):,} -> "
+                     f"{len(again.phrases):,} phrases")
+            best = again
+        return best
+
     def snapshot(collected: dict) -> None:
         """Write what is found so far, so a run that dies still hands it over."""
         done = [code for code in collected if code]
@@ -347,7 +458,7 @@ def _run(args, progress, cache_path: str) -> int:
     per_market: dict = {}
     probes: dict = {}
     if not markets:
-        per_market[""] = full_crawl("", given)
+        per_market[""] = crawl_until_closed("", given)
     else:
         # The primary market is crawled in full and becomes the reference every
         # other market is measured against. It is first in the list rather than a
@@ -357,7 +468,7 @@ def _run(args, progress, cache_path: str) -> int:
         if primary not in markets:
             markets = [primary] + markets
         rest = [code for code in markets if code != primary]
-        per_market[primary] = full_crawl(primary, given)
+        per_market[primary] = crawl_until_closed(primary, given)
         progress(f"market {primary}: {len(per_market[primary].phrases):,} phrases "
                  "(primary, the reference every other market is measured against)")
 
@@ -407,7 +518,8 @@ def _run(args, progress, cache_path: str) -> int:
                      f"the primary's {args.levels}: measured, the depth beyond that "
                      "is where a secondary market stops paying for itself")
         for code in earned:
-            per_market[code] = full_crawl(code, spellings, levels=secondary_levels)
+            per_market[code] = crawl_until_closed(code, spellings,
+                                                  levels=secondary_levels)
             progress(f"market {code}: {len(per_market[code].phrases):,} phrases")
             snapshot(per_market)
         if probes:
@@ -446,12 +558,17 @@ def _run(args, progress, cache_path: str) -> int:
         progress(
             f"WARNING: rate-limited after {meta['network_calls']:,} requests; "
             f"{meta['unexpanded_phrases']:,} phrases left unexpanded. The output is "
-            "sound but incomplete — the response cache keeps it, so re-run with a "
-            "larger --proxy-want to finish it."
+            "sound but incomplete — the response cache keeps it, so running this "
+            "seed again continues from here rather than starting over."
         )
     for kind, path in paths.items():
         print(f"{kind}: {path}")
-    return 0
+    # Everything found is written either way; the status is how a caller learns
+    # which of the two it got. Until this returned something other than 0, a
+    # rate-limited harvest was indistinguishable from a complete one to every
+    # script that ran it — which is how `binary option` sat on disk as a finished
+    # universe with a fifth of its frontier never expanded.
+    return INCOMPLETE if universe.blocked else 0
 
 
 if __name__ == "__main__":

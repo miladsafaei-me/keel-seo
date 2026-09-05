@@ -1280,3 +1280,130 @@ class APartialHarvestIsStillHandedOver(unittest.TestCase):
             self.assertFalse(os.path.exists(snapshot),
                              "a finished run must not leave two files claiming "
                              "to be the answer")
+
+
+class ResumingARateLimitedHarvest(unittest.TestCase):
+    """A block must not be the end of a universe, and must not become a loop.
+
+    Google answers 403 for "too much", the client latches, and the crawl stops
+    and keeps what it has. Everything below is about what happens NEXT: the run
+    picks the crawl up again while that pays, says so in its exit status when it
+    cannot finish, and the batch walker leaves the seed in the queue instead of
+    reading four files on disk as a finished universe.
+    """
+
+    def record(self, out, seed, *, blocked):
+        slug = harvest.slugify(seed)
+        with open(os.path.join(out, f"{slug}.json"), "w", encoding="utf-8") as handle:
+            json.dump({"meta": {"stopped_by_rate_limit": blocked}}, handle)
+        with open(os.path.join(out, f"{slug}.md"), "w", encoding="utf-8") as handle:
+            handle.write("# record\n")
+
+    def test_a_rate_limited_universe_is_not_already_harvested(self):
+        with tempfile.TemporaryDirectory() as out:
+            self.record(out, "binary option", blocked=True)
+            self.assertFalse(
+                harvest.already_harvested(out, "binary option"),
+                "a universe Google cut short is unfinished work; skipping it as "
+                "'already harvested' is what let one block its own completion")
+
+    def test_a_closed_universe_is_still_skipped(self):
+        with tempfile.TemporaryDirectory() as out:
+            self.record(out, "quotex", blocked=False)
+            self.assertTrue(harvest.already_harvested(out, "quotex"))
+
+    def test_a_missing_record_is_not_harvested(self):
+        with tempfile.TemporaryDirectory() as out:
+            self.assertFalse(harvest.already_harvested(out, "alpari"))
+
+    def test_an_unreadable_record_is_left_alone(self):
+        # A parse error must not buy an unattended six-hour crawl.
+        with tempfile.TemporaryDirectory() as out:
+            self.record(out, "alpari", blocked=False)
+            with open(os.path.join(out, "alpari.json"), "w", encoding="utf-8") as h:
+                h.write("{ truncated")
+            self.assertTrue(harvest.already_harvested(out, "alpari"))
+
+    def test_incomplete_is_its_own_status_and_not_failure(self):
+        from keel_seo.keywords.crawl import INCOMPLETE
+
+        self.assertEqual(INCOMPLETE, 2)
+        self.assertNotIn(INCOMPLETE, (0, 1),
+                         "a caller must be able to tell a harvest that delivered "
+                         "an incomplete universe from one that delivered nothing")
+
+
+class TheResumeStopsWhenItStopsPaying(unittest.TestCase):
+    """The no-progress guard, driven directly.
+
+    The attempt count alone would spend every attempt on an endpoint that has
+    decided to refuse us. What actually ends a doomed resume is that the replay
+    runs off the response cache, reaches the same frontier, is refused in the
+    same place and returns the same universe -- so an attempt that finds nothing
+    new ends the loop whatever is left of the count.
+    """
+
+    def universe(self, phrases, *, blocked=True, unexpanded=100):
+        made = Universe(seed="binary option")
+        for index in range(phrases):
+            text = f"binary option {index}"
+            made.phrases[text] = Phrase(text=text, best_rank=1, max_relevance=900,
+                                        first_level=0)
+        made.blocked = blocked
+        made.unexpanded = unexpanded
+        return made
+
+    def drive(self, attempts, results):
+        """Replay the wrapper's decision rule over canned crawl results."""
+        served = list(results)
+        best = served.pop(0)
+        tried = 0
+        for _ in range(1, max(0, attempts) + 1):
+            if not best.blocked or not best.unexpanded:
+                break
+            if not served:
+                break
+            tried += 1
+            again = served.pop(0)
+            if len(again.phrases) <= len(best.phrases):
+                break
+            best = again
+        return best, tried
+
+    def test_a_block_that_has_not_lifted_costs_one_attempt_not_three(self):
+        best, tried = self.drive(3, [self.universe(100), self.universe(100),
+                                     self.universe(100), self.universe(100)])
+        self.assertEqual(tried, 1)
+        self.assertEqual(len(best.phrases), 100)
+
+    def test_an_attempt_that_comes_back_smaller_is_discarded(self):
+        # A resume refused at level 0 returns less than was already collected.
+        best, tried = self.drive(2, [self.universe(100), self.universe(40)])
+        self.assertEqual(len(best.phrases), 100,
+                         "the fullest universe is the answer, never the last one")
+        self.assertEqual(tried, 1)
+
+    def test_progress_keeps_resuming_up_to_the_count(self):
+        best, tried = self.drive(2, [self.universe(100), self.universe(150),
+                                     self.universe(190)])
+        self.assertEqual(tried, 2)
+        self.assertEqual(len(best.phrases), 190)
+
+    def test_a_closed_universe_is_never_resumed(self):
+        best, tried = self.drive(3, [self.universe(100, blocked=False),
+                                     self.universe(500)])
+        self.assertEqual(tried, 0)
+        self.assertEqual(len(best.phrases), 100)
+
+    def test_a_level_capped_universe_is_not_a_block(self):
+        # pocket option finished with 43,899 phrases unexpanded and was never
+        # refused: that is --levels doing its job, and must not buy a resume.
+        best, tried = self.drive(3, [self.universe(100, blocked=False,
+                                                   unexpanded=43899),
+                                     self.universe(500)])
+        self.assertEqual(tried, 0)
+
+    def test_zero_attempts_disables_the_resume(self):
+        best, tried = self.drive(0, [self.universe(100), self.universe(500)])
+        self.assertEqual(tried, 0)
+        self.assertEqual(len(best.phrases), 100)

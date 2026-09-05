@@ -49,11 +49,12 @@ never returns search volume.** Everything this package produces describes the
 *shape* of demand, not its size.
 """
 from .cluster import Cluster, build as build_clusters
-from .crawl import Phrase, Universe, crawl
+from .crawl import INCOMPLETE, Phrase, Universe, crawl
 from .suggest import SuggestCache, SuggestClient, egress_identity
 
 __all__ = [
     "Cluster",
+    "INCOMPLETE",
     "Phrase",
     "SuggestCache",
     "SuggestClient",

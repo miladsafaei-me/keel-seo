@@ -25,21 +25,32 @@ briefly on a weekly timer, which would have re-paid for six unchanged universes
 every Sunday and, because the response cache makes a re-run nearly free, would
 not even have found anything new. Ask for a refresh explicitly instead.
 
-**Idempotent.** A seed whose output is already on disk is skipped, so pointing
-this at a list that is nine-tenths done costs nine-tenths of nothing. Pass
-``--refresh`` to re-harvest regardless, which is what a changed market list or a
-deliberately deeper crawl wants.
+**Idempotent, and it reads the record rather than counting files.** A seed whose
+universe is already on disk *and closed* is skipped, so pointing this at a list
+that is nine-tenths done costs nine-tenths of nothing. A seed Google cut short is
+NOT skipped: a rate-limited crawl writes the same four files a complete one
+writes, so counting files alone marked it done forever and the incomplete
+universe blocked its own completion. Running the list again continues it, and
+nearly for free -- the response cache still holds every answer it paid for. Pass
+``--refresh`` to re-harvest even the closed ones, which is what a changed market
+list or a deliberately deeper crawl wants.
+
+**Three outcomes, three exit codes.** 0 when every seed closed, 1 when a seed
+delivered nothing, and 2 when a seed delivered a sound but unfinished universe.
+The middle one is investigated; the last one is simply run again.
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import os
 import subprocess
 import sys
 import time
 from typing import NamedTuple
 
+from .crawl import INCOMPLETE
 from .proxying import DirectEgressRefused, require_pooled_egress
 from .report import slugify
 
@@ -110,10 +121,33 @@ def read_seeds(path: str) -> list[Seed]:
 
 
 def already_harvested(out: str, seed: str) -> bool:
-    """Whether this seed's workbook and record are both already on disk."""
+    """Whether this seed's universe is on disk **and closed**.
+
+    Files on disk are not the question, though they used to be the whole test. A
+    rate-limited crawl writes the same four files a complete one writes — that is
+    deliberate, everything collected is kept — so a seed Google cut short was
+    thereafter skipped as "already harvested" every time the walk came past it.
+    The incomplete universe permanently blocked its own completion, and the only
+    way out was ``--refresh``, which throws away the seeds that ARE closed.
+
+    So the record is read, not merely counted: a universe whose meta says it was
+    stopped by a rate limit is unfinished work, and unfinished work stays in the
+    queue. Continuing it is nearly free, because the response cache still holds
+    every answer it already paid for.
+    """
     slug = slugify(seed)
-    return all(os.path.exists(os.path.join(out, f"{slug}.{kind}"))
-               for kind in ("json", "md"))
+    paths = {kind: os.path.join(out, f"{slug}.{kind}") for kind in ("json", "md")}
+    if not all(os.path.exists(path) for path in paths.values()):
+        return False
+    try:
+        with open(paths["json"], encoding="utf-8") as handle:
+            meta = json.load(handle).get("meta", {})
+    except (OSError, ValueError):
+        # Unreadable or truncated: treat it as present rather than re-harvesting
+        # on the strength of a parse error. A genuinely broken record is a
+        # --refresh, not a surprise six-hour crawl in an unattended walk.
+        return True
+    return not meta.get("stopped_by_rate_limit", False)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -180,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         log(f"no seeds in {args.seeds} — nothing to do")
         return 0
 
-    done = skipped = failed = 0
+    done = skipped = failed = incomplete = 0
     for seed in seeds:
         if not args.refresh and already_harvested(args.out, seed.term):
             log(f"skipping {seed.term!r} — already harvested (use --refresh to redo)")
@@ -209,6 +243,14 @@ def main(argv: list[str] | None = None) -> int:
         if result.returncode == 0:
             done += 1
             log(f"done {seed.term!r} in {took}s")
+        elif result.returncode == INCOMPLETE:
+            # Written, sound, and not closed. Not a failure — it delivered a
+            # workbook — but not done either, and the walk says which so that the
+            # next pass over this list picks it up instead of skipping it.
+            incomplete += 1
+            log(f"INCOMPLETE {seed.term!r} after {took}s — rate-limited with its "
+                "frontier still open. The output is written and the response cache "
+                "keeps its progress; run this list again to continue it.")
         else:
             # Left for a later invocation rather than retried here: the usual
             # cause is that no proxy answered today, and asking again inside the
@@ -218,7 +260,9 @@ def main(argv: list[str] | None = None) -> int:
                 "response cache keeps its progress for the next run")
 
     log(f"walk complete — {done} harvested, {skipped} already had output, "
-        f"{failed} failed; output in {args.out}")
+        f"{incomplete} incomplete, {failed} failed; output in {args.out}")
+    if incomplete and not failed:
+        return INCOMPLETE
     return 1 if failed and not done else 0
 
 
