@@ -1,9 +1,9 @@
 {% extends gsc_base_template %}
 {% load keel_seo_icons humanize static %}
 
-{% block title %}Search Console{% endblock %}
+{% block title %}{% if sc_property %}{{ sc_property.label }} · {% endif %}Search Console{% endblock %}
 {% block page_pretitle %}SEO{% endblock %}
-{% block page_title %}Search Console{% endblock %}
+{% block page_title %}{% if sc_property %}{{ sc_property.label }} {% endif %}Search Console{% endblock %}
 
 {% block extra_head %}
 <link rel="stylesheet" href="{% static 'keel_seo/gsc/search_console.css' %}">
@@ -12,8 +12,12 @@
 {% block content %}
 {% if not sc_has_data %}
   <div class="rounded-2xl border border-warning-200 bg-warning-50 p-6 text-sm text-warning-700 dark:border-warning-500/30 dark:bg-warning-500/10 dark:text-warning-300">
+    {% if sc_property %}
+    No live Search Console data for <code class="font-mono">{{ sc_property.site }}</code>. Reload to retry; if it persists, check <code class="font-mono">GSC_LIVE</code> and that the service account can read this property.
+    {% else %}
     No dashboard data yet. Run <code class="font-mono">keel_seo.gsc.registry sync</code> then
     <code class="font-mono">tools/gsc/export_dashboard.py</code> and redeploy.
+    {% endif %}
   </div>
 {% else %}
 <span id="sc-csrf" hidden>{% csrf_token %}</span>
@@ -51,7 +55,7 @@
   <a href="#sc-overview" class="sc-nav__link">Overview</a>
   <a href="#sc-opportunities" class="sc-nav__link">Opportunities</a>
   <a href="#sc-structure" class="sc-nav__link">Site structure</a>
-  <a href="#sc-actions" class="sc-nav__link">Actions</a>
+  {% if not sc_property %}<a href="#sc-actions" class="sc-nav__link">Actions</a>{% endif %}
 </nav>
 
 {% comment %} ---- Date-range picker: preset windows + a custom calendar ---- {% endcomment %}
@@ -63,6 +67,7 @@
         <p class="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Showing data for</p>
         <p class="text-sm font-semibold text-gray-800 dark:text-white/90">{{ sc_range.label }}{% if sc_range.live %}<span class="ml-2 align-middle rounded-full bg-gsc-p3/15 px-2 py-0.5 text-[11px] font-semibold text-gsc-p3">live</span>{% else %}<span class="ml-2 align-middle rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-500 dark:bg-gray-800 dark:text-gray-400">snapshot</span>{% endif %}</p>
         {% if sc_range.snapped_from %}<p class="text-[11px] text-gray-400 dark:text-gray-500">nearest window covering {{ sc_range.snapped_from }}</p>{% endif %}
+        {% if sc_property %}<p class="text-[11px] text-gray-400 dark:text-gray-500">Property <span class="font-mono">{{ sc_property.site }}</span></p>{% endif %}
       </div>
     </div>
     <div class="flex flex-wrap items-center gap-1.5">
@@ -502,6 +507,7 @@
 {% comment %} ---- Dedicated-content candidates — Detail / By cluster, with queue action ---- {% endcomment %}
 {{ sc_dedicated_candidates|json_script:"tbl-ded" }}
 {{ sc_dedicated_by_cluster|json_script:"tbl-ded-cl" }}
+{% if not sc_property %}
 <section class="mb-8" x-data="scTabs('detail')">
   <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -596,6 +602,7 @@
     </div>
   </div>
 </section>
+{% endif %}
 
 {% comment %} ---- New queries — Detail / By cluster ---- {% endcomment %}
 {{ sc_new_queries|json_script:"tbl-new" }}
@@ -897,6 +904,7 @@
 </div>{% comment %} /#sc-structure {% endcomment %}
 
 {% comment %} ============================ ACTIONS ============================ {% endcomment %}
+{% if not sc_property %}
 <div id="sc-actions" class="sc-section">
 <section class="mb-3 flex items-center justify-between">
   <h2 class="sc-sechead mb-0">{% icon "sparkles" class="h-4 w-4 text-gsc-p2" %}Insights<span class="text-xs font-normal text-gray-400 dark:text-gray-500">— curated from the data; dismissing removes a card for its specific data only</span></h2>
@@ -975,6 +983,7 @@
 {% endfor %}
 
 </div>{% comment %} /#sc-actions {% endcomment %}
+{% endif %}
 
 </div>{% comment %} /#sc-root {% endcomment %}
 {% endif %}

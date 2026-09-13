@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 
 from django.conf import settings
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.module_loading import import_string
@@ -69,20 +69,35 @@ def _site_base(request) -> str:
         return f"{request.scheme}://{request.get_host()}"
 
 
-class SearchConsoleView(View):
-    """Search Console reporting + insights dashboard."""
+def _property_base(site: str) -> str:
+    """``scheme://domain`` for a declared property, so its page URLs shorten the same way
+    the host's own do."""
+    if site.startswith("sc-domain:"):
+        return "https://" + site.split(":", 1)[1]
+    return site.rstrip("/")
 
-    def get(self, request):
+
+class SearchConsoleView(View):
+    """Search Console reporting + insights dashboard, for the host's own property or for
+    one declared in ``KEEL_SEO["gsc_properties"]``."""
+
+    def get(self, request, property_key=None):
         if not _is_superuser(request.user):
             return _forbidden(request)
+        prop = None
+        if property_key is not None:
+            prop = config.gsc_property(property_key)
+            if prop is None:
+                raise Http404("No such Search Console property")
         ctx = dashboard.build_context(
             window=request.GET.get("window"),
             start=request.GET.get("start"),
             end=request.GET.get("end"),
+            prop=prop,
         )
         ctx["page_pretitle"] = "SEO"
         ctx["gsc_base_template"] = config.seo_setting("gsc_base_template")
-        ctx["sc_site_base"] = _site_base(request)
+        ctx["sc_site_base"] = _property_base(prop["site"]) if prop else _site_base(request)
         return render(request, "keel_seo/gsc/search_console.html", ctx)
 
 

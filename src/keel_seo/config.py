@@ -76,6 +76,19 @@ key is optional and the defaults make the package work standalone:
         # URL name an authenticated-but-not-superuser visitor is redirected to.
         # Default None raises Django's standard PermissionDenied (403) instead.
         "gsc_forbidden_redirect": "core:home",
+        # Other Search Console properties the same dashboard can show, each at
+        # <mount>/<key> and superuser-gated like the rest. The service account behind
+        # gsc_credentials must be able to read every one. They are live-only: no
+        # snapshots, insights, coverage or content-queue actions, because those all
+        # describe the host's own site. "default_window" and "max_window" take a
+        # preset key (7d/30d/60d/90d/full); "directory_series": False skips the
+        # date x page pull, the slowest one on a large property. A key must not
+        # match one of the dashboard's own action routes (dismiss, restore, queue).
+        "gsc_properties": {
+            "kifpool": {"site": "https://kifpool.me/", "label": "Kifpool",
+                        "default_window": "30d", "max_window": "90d",
+                        "directory_series": False},
+        },
 
         # ---- keel_seo.intent (one query intent, one canonical URL) ----
         # Dotted path to a callable returning this site's intent registry: which
@@ -107,6 +120,7 @@ _DEFAULTS = {
     "gsc_queue_list_url_name": None,
     "gsc_plan_edit_url_name": None,
     "gsc_forbidden_redirect": None,
+    "gsc_properties": None,
     "intent_registry_hook": None,
 }
 
@@ -157,3 +171,12 @@ def gsc_queue_list_url() -> str:
         return reverse(name)
     except Exception:
         return ""
+
+
+def gsc_property(key):
+    """One declared ``gsc_properties`` entry with its key filled in, or None when the
+    key is not declared or names no site (the dashboard view answers that with 404)."""
+    entry = (seo_setting("gsc_properties") or {}).get(key)
+    if not entry or not entry.get("site"):
+        return None
+    return {"key": key, "label": key, **entry}

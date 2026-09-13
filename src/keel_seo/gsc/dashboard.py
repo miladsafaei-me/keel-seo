@@ -109,19 +109,46 @@ def _load_window(key: str) -> dict:
     return _read(windows_dir / "full.json")
 
 
-def _live_target(window: "str | None", start: "str | None", end: "str | None") -> tuple:
+def _property_window(prop: "dict | None") -> dict:
+    """The window bounds a declared extra property sets: the preset it opens on and the
+    widest span one live pull may cover. The host's own dashboard has neither bound."""
+    if not prop:
+        return {}
+    max_days = WINDOW_DAYS.get(prop.get("max_window") or "")
+    default = prop.get("default_window")
+    if default not in WINDOW_DAYS:
+        default = DEFAULT_WINDOW
+    if max_days and WINDOW_DAYS[default] > max_days:
+        default = prop["max_window"]
+    return {"default_window": default, "max_days": max_days}
+
+
+def _live_target(window: "str | None", start: "str | None", end: "str | None",
+                 default_window: str = DEFAULT_WINDOW, max_days: "int | None" = None) -> tuple:
     """The concrete (window_key, start, end) to compute live, or (None, None, None) when
     the request should use the committed snapshot instead. Presets become a trailing
     window ending at the GSC data lag; an explicit start/end is a custom range; ``full``
-    (and the bare default) always stays the curated registry snapshot."""
-    if start and end:
-        return "custom", start, end
+    (and the bare default) always stays the curated registry snapshot. ``max_days``
+    bounds both: a wider preset falls back to the widest allowed one, and a longer
+    custom range keeps its end and drops its oldest days."""
     import datetime as _dt
+
+    if start and end:
+        if max_days:
+            try:
+                last = _dt.date.fromisoformat(end)
+                if (last - _dt.date.fromisoformat(start)).days + 1 > max_days:
+                    start = (last - _dt.timedelta(days=max_days - 1)).isoformat()
+            except ValueError:
+                pass
+        return "custom", start, end
 
     # Every preset AND the "All" window (+ the bare default) is a trailing live window.
     # "All" is a 480-day (~16-month, GSC domain-property max) pull — so it is always the
     # widest window, never smaller than a preset (the old registry snapshot undercounted).
-    key = window if window in WINDOW_DAYS else DEFAULT_WINDOW
+    key = window if window in WINDOW_DAYS else default_window
+    if max_days and WINDOW_DAYS[key] > max_days:
+        key = max((k for k, d, _ in WINDOWS if d <= max_days), key=WINDOW_DAYS.get)
     # Pull right up to today: gsc_live uses dataState="all" (fresh data), so recent days
     # are populated, and the empty tail (if any) is trimmed downstream. Ending at the old
     # today-2 lag is what left the freshest day rendering as a zero.
@@ -612,26 +639,33 @@ def _perf_directory_charts(data: dict, all_chart: dict) -> tuple:
     return charts, dirs
 
 
-def _resolve_payload(window=None, start=None, end=None):
+def _resolve_payload(window=None, start=None, end=None, prop=None):
     """Load the dashboard payload for a range. Returns ``(data, win_key, snapped_from,
     live_failed)`` so both the page render and the row actions read the SAME data for
     the same range — an action that re-derived it differently could act on a row the
-    reader was never shown."""
+    reader was never shown.
+
+    A declared extra property (``prop``) is live-only: when its pull is off or fails it
+    gets no data, never the host's own snapshot shown under another site's name."""
     data = None
     win_key = None
     snapped_from = None
     live_failed = False
+    site = prop["site"] if prop else None
 
     # Live path: any exact range (presets refreshed to "now", or a free-calendar span)
     # is computed straight from the API and cached. Falls through to the committed
     # snapshot when live is disabled or a pull fails.
-    live_key, live_start, live_end = _live_target(window, start, end)
+    live_key, live_start, live_end = _live_target(window, start, end, **_property_window(prop))
     if live_key is not None:
         try:
             from . import live as gsc_live
 
-            if gsc_live.live_enabled():
-                data = gsc_live.build_range(live_start, live_end, window=live_key)
+            if gsc_live.live_enabled(site):
+                data = gsc_live.build_range(
+                    live_start, live_end, window=live_key, site=site,
+                    directory_series=prop.get("directory_series", True) if prop else True,
+                )
                 win_key = live_key
         except Exception:
             # Live was on but the pull failed — surface it so the reader knows they are
@@ -642,6 +676,8 @@ def _resolve_payload(window=None, start=None, end=None):
             data = None
             live_failed = True
 
+    if data is None and prop:
+        return {}, live_key, None, live_failed
     if data is None:
         win_key, snapped_from = _resolve_window(window, start, end)
         data = _load_window(win_key)
@@ -653,12 +689,14 @@ def _window_payload(window=None, start=None, end=None) -> dict:
 
 
 def build_context(window: "str | None" = None, start: "str | None" = None,
-                  end: "str | None" = None) -> dict:
+                  end: "str | None" = None, prop: "dict | None" = None) -> dict:
     data, win_key, snapped_from, live_failed = _resolve_payload(
-        window=window, start=start, end=end
+        window=window, start=start, end=end, prop=prop
     )
 
-    insights_doc = _read(_insights_json())
+    # A declared extra property has no curated insights, coverage file, exclusions or
+    # content queue of its own: every one of those describes the host site.
+    insights_doc = {} if prop else _read(_insights_json())
 
     meta = data.get("meta", {})
     sc_range = {
@@ -673,6 +711,7 @@ def build_context(window: "str | None" = None, start: "str | None" = None,
     sc_windows = [
         {"key": k, "days": d, "label": lbl, "active": k == win_key}
         for k, d, lbl in WINDOWS
+        if not _property_window(prop).get("max_days") or d <= _property_window(prop)["max_days"]
     ]
 
     totals = data.get("totals", {})
@@ -730,7 +769,7 @@ def build_context(window: "str | None" = None, start: "str | None" = None,
         r["pos_tone"] = _position_tone(r.get("position", 0))
 
     # insights: fingerprint each, drop dismissed, group by category
-    dismissed = load_dismissed()
+    dismissed = {} if prop else load_dismissed()
     raw = insights_doc.get("insights", [])
     kept, hidden = [], 0
     for ins in raw:
@@ -750,12 +789,12 @@ def build_context(window: "str | None" = None, start: "str | None" = None,
     # cluster with other keywords, and a plan needs a title and a brief that only the
     # intent analysis can produce. So the check follows where the button actually
     # sends it.
-    excluded_dedicated = load_dedicated_excluded()
-    already_picked = picked_queries()
-    picks_url = config.gsc_queue_list_url()
-    dedicated_total = data.get("dedicated_content_candidates_count", 0)
+    excluded_dedicated = set() if prop else load_dedicated_excluded()
+    already_picked = {} if prop else picked_queries()
+    picks_url = "" if prop else config.gsc_queue_list_url()
+    dedicated_total = 0 if prop else data.get("dedicated_content_candidates_count", 0)
     dedicated = []
-    for r in data.get("dedicated_content_candidates", []):
+    for r in [] if prop else data.get("dedicated_content_candidates", []):
         term = (r.get("query") or "").strip().lower()
         if term in excluded_dedicated:
             dedicated_total = max(0, dedicated_total - 1)
@@ -770,9 +809,9 @@ def build_context(window: "str | None" = None, start: "str | None" = None,
     # so how many articles it becomes is exactly what clustering decides. Member
     # queries are dropped before the payload reaches the browser — the page never
     # needs them and a broad cluster carries hundreds.
-    excluded_clusters = load_dedicated_cluster_excluded()
+    excluded_clusters = set() if prop else load_dedicated_cluster_excluded()
     dedicated_clusters = []
-    for row in data.get("dedicated_by_cluster", []):
+    for row in [] if prop else data.get("dedicated_by_cluster", []):
         name = str(row.get("cluster", "")).strip()
         if name.lower() in excluded_clusters:
             continue
@@ -822,7 +861,7 @@ def build_context(window: "str | None" = None, start: "str | None" = None,
         "sc_cannibalization_count": data.get("cannibalization_count", 0),
         "sc_ctr_curve": ctr_curve,
         "sc_ctr_underperformers": data.get("ctr_underperformers", []),
-        "sc_coverage": _load_coverage(),
+        "sc_coverage": None if prop else _load_coverage(),
         "sc_insights_meta": insights_doc.get("meta", {}),
         "sc_totals": totals,
         "sc_position_bands": position_bands,
@@ -846,4 +885,5 @@ def build_context(window: "str | None" = None, start: "str | None" = None,
         "sc_thresholds": gsc_build.thresholds(),
         "sc_live_failed": live_failed,
         "sc_has_data": bool(data),
+        "sc_property": prop,
     }

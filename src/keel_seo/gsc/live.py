@@ -51,12 +51,13 @@ def _creds_path() -> str:
     return os.environ.get("GSC_CREDENTIALS", "")
 
 
-def live_enabled() -> bool:
-    """Live querying is on only when explicitly enabled AND the key is actually present."""
+def live_enabled(site: "str | None" = None) -> bool:
+    """Live querying is on only when explicitly enabled AND the key is actually present.
+    A named ``site`` (a declared extra property) does not need ``$GSC_SITE``."""
     if os.environ.get("GSC_LIVE") != "1":
         return False
     p = _creds_path()
-    return bool(p) and Path(p).exists() and bool(os.environ.get("GSC_SITE"))
+    return bool(p) and Path(p).exists() and bool(site or os.environ.get("GSC_SITE"))
 
 
 def data_lag_end() -> str:
@@ -285,10 +286,16 @@ def _dir_daily_series(dp_rows: list, axis: list, top: int = 15) -> dict:
     return out
 
 
-def build_range(start: str, end: str, window: str = "custom") -> dict:
-    """A full dashboard payload for [start, end], computed live and cached per range."""
-    site = os.environ["GSC_SITE"]
-    ckey = f"gscdash:{CACHE_VER}:{site}:{start}:{end}"
+def build_range(start: str, end: str, window: str = "custom", site: "str | None" = None,
+                directory_series: bool = True) -> dict:
+    """A full dashboard payload for [start, end], computed live and cached per range.
+
+    ``site`` defaults to ``$GSC_SITE``. Any other property skips the host's query
+    enrichment map, which only describes the host's own queries, and
+    ``directory_series=False`` skips the date x page pull behind the Performance
+    chart's directory filter, the slowest pull on a large property."""
+    site = site or os.environ["GSC_SITE"]
+    ckey = f"gscdash:{CACHE_VER}:{site}:{start}:{end}" + ("" if directory_series else ":nodirs")
     hit = cache.get(ckey)
     if hit is not None:
         return hit
@@ -297,7 +304,7 @@ def build_range(start: str, end: str, window: str = "custom") -> dict:
     q_rows = _pull(service, site, start, end, ["query"])
     p_rows = _pull(service, site, start, end, ["page"])
     qp_rows = _pull(service, site, start, end, ["page", "query"])
-    enrich = _enrichment()
+    enrich = _enrichment() if site == os.environ.get("GSC_SITE") else {}
 
     queries: dict = {}
     for r in q_rows:
@@ -344,7 +351,7 @@ def build_range(start: str, end: str, window: str = "custom") -> dict:
     # extra date×page pull, aggregated by first path segment over the kept date axis, so
     # the dropdown can re-scope the chart client-side with no reload.
     axis = [d["date"] for d in comp["time_series"]["days"]]
-    if axis:
+    if axis and directory_series:
         dp_rows = _pull(service, site, start, end, ["date", "page"])
         payload["dir_series"] = _dir_daily_series(dp_rows, axis)
 

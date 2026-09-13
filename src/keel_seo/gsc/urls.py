@@ -32,6 +32,9 @@ urlpatterns = [
     path("/dedicated/queue", views.dedicated_queue, name="dedicated_queue"),
     path("/dedicated/cluster-exclude", views.cluster_exclude, name="cluster_exclude"),
     path("/dedicated/cluster-queue", views.cluster_queue, name="cluster_queue"),
+    # A property declared in KEEL_SEO["gsc_properties"]; an undeclared key answers 404.
+    # Listed after every action route, so a key can never shadow one of them.
+    path("/<slug:property_key>", views.SearchConsoleView.as_view(), name="search_console_property"),
     # Trailing-slash form 404s under APPEND_SLASH (the route is deliberately
     # slash-less); redirect it so a typed slash still lands on the dashboard.
     path("/", RedirectView.as_view(pattern_name="keel_seo_gsc:search_console", permanent=False)),
