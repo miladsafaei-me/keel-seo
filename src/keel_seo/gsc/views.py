@@ -97,6 +97,7 @@ class SearchConsoleView(View):
         )
         ctx["page_pretitle"] = "SEO"
         ctx["gsc_base_template"] = config.seo_setting("gsc_base_template")
+        ctx["sc_standalone_css"] = config.seo_setting("gsc_standalone_css")
         ctx["sc_site_base"] = _property_base(prop["site"]) if prop else _site_base(request)
         return render(request, "keel_seo/gsc/search_console.html", ctx)
 

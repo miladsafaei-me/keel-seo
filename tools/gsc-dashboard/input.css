@@ -1,0 +1,96 @@
+/*
+  Standalone utility stylesheet for the keel_seo.gsc dashboard.
+
+  The dashboard template is written in Tailwind utility classes. A host whose admin
+  already compiles those classes (SignalBots' TailAdmin build) renders it as designed;
+  a host whose admin has no Tailwind build rendered most of it as raw HTML. This file
+  compiles exactly the classes the dashboard uses, so it renders on any host.
+
+  The theme and the dark variant copy the TailAdmin tokens the dashboard was designed
+  against (signalbots/backend/users/static/client/tailwind/input.css), so on a host
+  that also loads that build the two agree. No preflight: the host's base styles and
+  its admin chrome stay untouched.
+
+  Rebuild with tools/gsc-dashboard/build.sh after changing the template, its JS, or a
+  colour token the dashboard computes in Python.
+*/
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+
+@source "../../src/keel_seo/templates/keel_seo/gsc";
+@source "../../src/keel_seo/static/keel_seo/gsc/search_console.js";
+
+/* Classes the template builds from Python values, invisible to the scanner. */
+@source inline("w-{1,2,3,4,5,6,7,8,9,10,11,12}/12");
+@source inline("{bg,fill,text}-{gsc-p1,gsc-p2,gsc-p3,gsc-p4,gsc-p5,gsc-p6,gray-300}");
+@source inline("bg-{gsc-p1,gsc-p2,gsc-p3,gsc-p4,gsc-p5,gsc-p6}/15");
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --text-title-sm: 30px;
+  --text-title-sm--line-height: 38px;
+  --text-theme-xl: 20px;
+  --text-theme-xl--line-height: 30px;
+  --text-theme-sm: 14px;
+  --text-theme-sm--line-height: 20px;
+  --text-theme-xs: 12px;
+  --text-theme-xs--line-height: 18px;
+
+  --color-white: #ffffff;
+  --color-black: #101828;
+
+  --color-gsc-p1: #6fa8f5;
+  --color-gsc-p2: #b57cf3;
+  --color-gsc-p3: #52bdb7;
+  --color-gsc-p4: #f5c445;
+  --color-gsc-p5: #ee7b72;
+  --color-gsc-p6: #ea86c6;
+
+  --color-brand-25: #f2f7ff;
+  --color-brand-50: #ecf3ff;
+  --color-brand-100: #dde9ff;
+  --color-brand-200: #c2d6ff;
+  --color-brand-300: #9cb9ff;
+  --color-brand-400: #7592ff;
+  --color-brand-500: #465fff;
+  --color-brand-600: #3641f5;
+  --color-brand-700: #2a31d8;
+  --color-brand-800: #252dae;
+  --color-brand-900: #262e89;
+  --color-brand-950: #161950;
+
+  --color-gray-25: #fcfcfd;
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f2f4f7;
+  --color-gray-200: #e4e7ec;
+  --color-gray-300: #d0d5dd;
+  --color-gray-400: #98a2b3;
+  --color-gray-500: #667085;
+  --color-gray-600: #475467;
+  --color-gray-700: #344054;
+  --color-gray-800: #1d2939;
+  --color-gray-900: #101828;
+  --color-gray-950: #0c111d;
+
+  --color-success-50: #ecfdf3;
+  --color-success-300: #6ce9a6;
+  --color-success-500: #12b76a;
+  --color-success-600: #039855;
+
+  --color-error-50: #fef3f2;
+  --color-error-300: #fda29b;
+  --color-error-500: #f04438;
+  --color-error-600: #d92d20;
+
+  --color-warning-50: #fffaeb;
+  --color-warning-200: #fedf89;
+  --color-warning-300: #fec84b;
+  --color-warning-500: #f79009;
+  --color-warning-600: #dc6803;
+  --color-warning-700: #b54708;
+
+  --shadow-theme-xs: 0px 1px 2px 0px rgba(16, 24, 40, 0.05);
+  --shadow-theme-sm: 0px 1px 3px 0px rgba(16, 24, 40, 0.1), 0px 1px 2px 0px rgba(16, 24, 40, 0.06);
+}

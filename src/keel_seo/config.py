@@ -76,6 +76,11 @@ key is optional and the defaults make the package work standalone:
         # URL name an authenticated-but-not-superuser visitor is redirected to.
         # Default None raises Django's standard PermissionDenied (403) instead.
         "gsc_forbidden_redirect": "core:home",
+        # Load the dashboard's own compiled utility stylesheet
+        # (static/keel_seo/gsc/search_console.utilities.css). Default True, so the
+        # dashboard renders as designed on a host with no Tailwind build; a host whose
+        # admin already compiles the same TailAdmin classes may turn it off.
+        "gsc_standalone_css": True,
         # Other Search Console properties the same dashboard can show, each at
         # <mount>/<key> and superuser-gated like the rest. The service account behind
         # gsc_credentials must be able to read every one. They are live-only: no
@@ -120,6 +125,7 @@ _DEFAULTS = {
     "gsc_queue_list_url_name": None,
     "gsc_plan_edit_url_name": None,
     "gsc_forbidden_redirect": None,
+    "gsc_standalone_css": True,
     "gsc_properties": None,
     "intent_registry_hook": None,
 }

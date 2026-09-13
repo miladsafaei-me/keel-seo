@@ -6,6 +6,7 @@
 {% block page_title %}{% if sc_property %}{{ sc_property.label }} {% endif %}Search Console{% endblock %}
 
 {% block extra_head %}
+{% if sc_standalone_css %}<link rel="stylesheet" href="{% static 'keel_seo/gsc/search_console.utilities.css' %}">{% endif %}
 <link rel="stylesheet" href="{% static 'keel_seo/gsc/search_console.css' %}">
 {% endblock %}
 

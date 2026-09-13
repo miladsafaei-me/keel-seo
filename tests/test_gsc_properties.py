@@ -103,3 +103,14 @@ class PropertyViewTests(SimpleTestCase):
     def test_property_urls_shorten_to_their_own_base(self):
         self.assertEqual(views._property_base("https://kifpool.me/"), "https://kifpool.me")
         self.assertEqual(views._property_base("sc-domain:kifpool.me"), "https://kifpool.me")
+
+
+class StandaloneStylesTests(SimpleTestCase):
+    def test_the_compiled_stylesheet_is_on_by_default_and_ships(self):
+        from pathlib import Path
+
+        import keel_seo
+
+        self.assertTrue(config.seo_setting("gsc_standalone_css"))
+        sheet = Path(keel_seo.__file__).parent / "static/keel_seo/gsc/search_console.utilities.css"
+        self.assertIn("bg-gsc-p1", sheet.read_text())

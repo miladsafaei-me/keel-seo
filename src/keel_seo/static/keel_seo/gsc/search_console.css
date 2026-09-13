@@ -463,7 +463,10 @@
 
 /* Movers */
 #sc-root .sc-movers__title { font-size: 0.9rem; font-weight: 600; color: var(--sc-ink); margin-bottom: 0.6rem; }
-#sc-root .sc-movers__cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+#sc-root .sc-movers__cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+@media (max-width: 40rem) {
+  #sc-root .sc-movers__cols { grid-template-columns: minmax(0, 1fr); }
+}
 #sc-root .sc-movers__head {
   font-size: 0.68rem;
   font-weight: 700;
@@ -578,6 +581,26 @@
 /* Offset in-page jumps so the sticky nav never covers a section heading. */
 #sc-root .sc-section { scroll-margin-top: 4.5rem; }
 html { scroll-behavior: smooth; }
+
+/* A grid child never grows past its track: a long query or URL truncates inside its
+   card instead of widening the whole page past the screen. */
+#sc-root .grid > *,
+#sc-root .sc-movers__cols > * { min-width: 0; }
+
+/* Every data table: a gutter between neighbouring cells, so a right-aligned figure never
+   runs into the left-aligned column after it. On a phone a table keeps a readable width
+   and scrolls inside its card rather than wrapping each cell a word per line. */
+#sc-root .overflow-x-auto > table :is(th, td) + :is(th, td) { padding-left: 0.75rem; }
+@media (max-width: 40rem) {
+  #sc-root .overflow-x-auto > table { min-width: 36rem; }
+}
+
+/* Below a desktop width the metric boxes share each row, instead of sitting at a fixed
+   180px with a grey gap beside them. */
+@media (max-width: 64rem) {
+  #sc-root .sc-perf__boxes { width: 100%; }
+  #sc-root .sc-perf__box { flex: 1 1 8.5rem; width: auto; }
+}
 
 /* Section heading (Opportunities / Site structure / …) */
 #sc-root .sc-sechead {
