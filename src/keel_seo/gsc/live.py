@@ -17,6 +17,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 from pathlib import Path
 
 from django.core.cache import cache
@@ -92,7 +93,8 @@ def _service():
     return service
 
 
-def _pull(service, site: str, start: str, end: str, dimensions: list) -> list:
+def _pull(service, site: str, start: str, end: str, dimensions: list,
+          filters: "list | None" = None) -> list:
     rows: list = []
     start_row = 0
     while True:
@@ -102,6 +104,8 @@ def _pull(service, site: str, start: str, end: str, dimensions: list) -> list:
         body = {"startDate": start, "endDate": end, "dimensions": dimensions,
                 "dataState": "all",
                 "rowLimit": 25000, "startRow": start_row}
+        if filters:
+            body["dimensionFilterGroups"] = [{"filters": filters}]
         resp = service.searchanalytics().query(siteUrl=site, body=body).execute()
         page = resp.get("rows", [])
         rows.extend(page)
@@ -245,44 +249,57 @@ def _bands_live(service, site: str, end: str) -> dict:
     return {"windows": [w[0] for w in windows], "bands": bands}
 
 
-def _dir_daily_series(dp_rows: list, axis: list, top: int = 15) -> dict:
-    """Per-URL-directory daily series from a date×page pull, keyed by first path segment.
+def _directory_filter(directory: str) -> list:
+    """A Search Analytics page filter matching the URLs whose first path segment is
+    ``directory`` (the same split as ``build._first_directory``); ``(home)`` is the root."""
+    if directory == "(home)":
+        pattern = r"^https?://[^/]+/?(?:[?#]|$)"
+    else:
+        pattern = r"^https?://[^/]+/" + re.escape(directory) + r"(?:[/?#]|$)"
+    return [{"dimension": "page", "operator": "includingRegex", "expression": pattern}]
 
-    The page dimension is not query-anonymized, so summing pages is complete. Returns
-    ``{slug: {label, days:[{date, c_clicks, c_impr, c_ctr, c_pos}], totals:{...}}}`` over
-    the shared ``axis`` (same dates as the "all" series so charts overlay identically),
-    ordered by clicks desc and capped to ``top`` directories.
+
+def _dir_daily_series(service, site: str, start: str, end: str, p_rows: list, axis: list,
+                      top: int = 15) -> dict:
+    """Per-URL-directory daily series for the Performance chart's directory filter.
+
+    The directories and their order come from the page rows the range already pulled
+    (clicks desc, capped to ``top``); each series is then one ``date`` pull filtered to
+    that directory's pages. That is ``top`` requests of one row per day, where a
+    date x page pull returned 390k rows and took 49s of a 92s 90-day load on a
+    70k-clicks-a-day property. Returns ``{slug: {label, days:[{date, c_clicks, c_impr,
+    c_ctr, c_pos}], totals:{...}}}`` over the shared ``axis``, so charts overlay the
+    "all" series day for day.
     """
-    acc: dict = {}          # dir -> date -> {clicks, impr, wpos}
-    tot: dict = {}          # dir -> {clicks, impr, wpos}
-    for r in dp_rows:
-        k = r.get("keys") or []
-        if len(k) < 2:
-            continue
-        date, page = k[0], k[1]
-        d = gsc_build._first_directory(page)
-        clicks, impr = int(r.get("clicks", 0)), int(r.get("impressions", 0))
-        wpos = r.get("position", 0.0) * impr
-        dd = acc.setdefault(d, {}).setdefault(date, {"clicks": 0, "impr": 0, "wpos": 0.0})
-        dd["clicks"] += clicks; dd["impr"] += impr; dd["wpos"] += wpos
-        t = tot.setdefault(d, {"clicks": 0, "impr": 0, "wpos": 0.0})
-        t["clicks"] += clicks; t["impr"] += impr; t["wpos"] += wpos
+    clicks_by_dir: dict = {}
+    for r in p_rows:
+        keys = r.get("keys") or []
+        if keys:
+            d = gsc_build._first_directory(keys[0])
+            clicks_by_dir[d] = clicks_by_dir.get(d, 0) + int(r.get("clicks", 0))
+    ranked = sorted(clicks_by_dir.items(), key=lambda kv: kv[1], reverse=True)[:top]
 
+    kept = set(axis)
     out: dict = {}
-    for d, t in sorted(tot.items(), key=lambda kv: kv[1]["clicks"], reverse=True)[:top]:
-        bydate = acc.get(d, {})
-        days = []
+    for d, _clicks in ranked:
+        bydate = {}
+        for r in _pull(service, site, start, end, ["date"], filters=_directory_filter(d)):
+            date = (r.get("keys") or [None])[0]
+            if date in kept:
+                bydate[date] = r
+        days, t_clicks, t_impr, t_wpos = [], 0, 0, 0.0
         for date in axis:
-            e = bydate.get(date, {})
-            impr, clicks = e.get("impr", 0), e.get("clicks", 0)
+            r = bydate.get(date, {})
+            clicks, impr = int(r.get("clicks", 0)), int(r.get("impressions", 0))
+            pos = r.get("position", 0.0)
+            t_clicks += clicks; t_impr += impr; t_wpos += pos * impr
             days.append({"date": date, "c_clicks": clicks, "c_impr": impr,
                          "c_ctr": round(clicks / impr * 100, 2) if impr else 0.0,
-                         "c_pos": round(e.get("wpos", 0.0) / impr, 1) if impr else 0.0})
-        timpr = t["impr"]
+                         "c_pos": round(pos, 1) if impr else 0.0})
         out[d] = {"label": "Home" if d == "(home)" else "/" + d, "days": days,
-                  "totals": {"clicks": t["clicks"], "impressions": timpr,
-                             "ctr": round(t["clicks"] / timpr * 100, 2) if timpr else 0.0,
-                             "position": round(t["wpos"] / timpr, 1) if timpr else 0.0}}
+                  "totals": {"clicks": t_clicks, "impressions": t_impr,
+                             "ctr": round(t_clicks / t_impr * 100, 2) if t_impr else 0.0,
+                             "position": round(t_wpos / t_impr, 1) if t_impr else 0.0}}
     return out
 
 
@@ -347,13 +364,12 @@ def build_range(start: str, end: str, window: str = "custom", site: "str | None"
     payload["totals"]["ctr"] = round(tt["ctr"] * 100, 2)
     payload["totals"]["position"] = tt["position"]
 
-    # Per-URL-directory daily series for the Performance chart's directory filter. One
-    # extra date×page pull, aggregated by first path segment over the kept date axis, so
-    # the dropdown can re-scope the chart client-side with no reload.
+    # Per-URL-directory daily series for the Performance chart's directory filter, one
+    # small filtered date pull per directory, so the dropdown re-scopes the chart
+    # client-side with no reload.
     axis = [d["date"] for d in comp["time_series"]["days"]]
     if axis and directory_series:
-        dp_rows = _pull(service, site, start, end, ["date", "page"])
-        payload["dir_series"] = _dir_daily_series(dp_rows, axis)
+        payload["dir_series"] = _dir_daily_series(service, site, start, end, p_rows, axis)
 
     # Label/meta reflect the true last-populated date, not the requested end (which may
     # sit a day or two ahead of GSC's freshest data).

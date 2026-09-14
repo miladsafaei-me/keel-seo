@@ -114,3 +114,20 @@ class StandaloneStylesTests(SimpleTestCase):
         self.assertTrue(config.seo_setting("gsc_standalone_css"))
         sheet = Path(keel_seo.__file__).parent / "static/keel_seo/gsc/search_console.utilities.css"
         self.assertIn("bg-gsc-p1", sheet.read_text())
+
+
+class DirectoryFilterTests(SimpleTestCase):
+    def test_a_directory_filter_matches_its_own_pages_only(self):
+        import re
+
+        from keel_seo.gsc import live
+
+        live_dir = re.compile(live._directory_filter("live")[0]["expression"])
+        for url in ("https://kifpool.me/live", "https://kifpool.me/live/currency", "https://kifpool.me/live?x=1"):
+            self.assertTrue(live_dir.search(url), url)
+        for url in ("https://kifpool.me/lives", "https://kifpool.me/", "https://kifpool.me/blog/live"):
+            self.assertFalse(live_dir.search(url), url)
+        home = re.compile(live._directory_filter("(home)")[0]["expression"])
+        self.assertTrue(home.search("https://kifpool.me/"))
+        self.assertTrue(home.search("https://kifpool.me"))
+        self.assertFalse(home.search("https://kifpool.me/live"))
