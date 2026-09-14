@@ -591,6 +591,7 @@ html { scroll-behavior: smooth; }
    runs into the left-aligned column after it. On a phone a table keeps a readable width
    and scrolls inside its card rather than wrapping each cell a word per line. */
 #sc-root .overflow-x-auto > table :is(th, td) + :is(th, td) { padding-left: 0.75rem; }
+#sc-root .overflow-x-auto > table :is(th, td).text-right { white-space: nowrap; }
 @media (max-width: 40rem) {
   #sc-root .overflow-x-auto > table { min-width: 36rem; }
 }

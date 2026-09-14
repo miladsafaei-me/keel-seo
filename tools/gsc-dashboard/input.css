@@ -11,12 +11,18 @@
   that also loads that build the two agree. No preflight: the host's base styles and
   its admin chrome stay untouched.
 
+  The utilities are compiled OUTSIDE a cascade layer on purpose. A host reset such as
+  `* { margin: 0; padding: 0 }` is itself unlayered, and an unlayered rule beats every
+  layered one whatever its specificity, so layered utilities lost every margin, padding
+  and font on Revenika's admin. Unlayered, a utility's class selector outranks a bare
+  `*` reset, and search_console.css's `#sc-root` rules still outrank the utilities.
+
   Rebuild with tools/gsc-dashboard/build.sh after changing the template, its JS, or a
   colour token the dashboard computes in Python.
 */
 @layer theme, base, components, utilities;
 @import "tailwindcss/theme.css" layer(theme);
-@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@import "tailwindcss/utilities.css" source(none);
 
 @source "../../src/keel_seo/templates/keel_seo/gsc";
 @source "../../src/keel_seo/static/keel_seo/gsc/search_console.js";
