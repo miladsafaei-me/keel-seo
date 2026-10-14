@@ -102,6 +102,16 @@ key is optional and the defaults make the package work standalone:
         # `manage.py keel_seo_intent_check --strict` for the gate. Default None →
         # empty registry, every check trivially passes, nothing is enforced.
         "intent_registry_hook": "core.seo_intents.intent_registry",
+
+        # ---- keel_seo.noindex_paths (sections never advertised, by header) ----
+        # Path prefixes whose every response leaves with an X-Robots-Tag, whatever
+        # the body is (a feed, a JSON reply, a redirect, a third-party app's 404):
+        # a forum, a member area, a search page, an upload endpoint. Needs
+        # "keel_seo.noindex_paths.NoindexPathsMiddleware" near the top of
+        # MIDDLEWARE. Default () -> the middleware stamps nothing.
+        "noindex_paths": ("/forum/",),
+        # The X-Robots-Tag value those responses carry.
+        "noindex_paths_robots": "noindex, nofollow",
     }
 """
 from django.conf import settings
@@ -128,6 +138,8 @@ _DEFAULTS = {
     "gsc_standalone_css": True,
     "gsc_properties": None,
     "intent_registry_hook": None,
+    "noindex_paths": (),
+    "noindex_paths_robots": "noindex, nofollow",
 }
 
 

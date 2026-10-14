@@ -159,6 +159,33 @@ Config (`KEEL_SEO`, all optional — see `keel_seo/config.py`):
   volatile substrings specific to a host's own templates. Default `None`
   (built-ins only).
 
+## Sections never advertised (`keel_seo.noindex_paths`)
+
+The robots meta is decided per URL by the Landing gate, and that holds for a rendered
+page. A section a site keeps public without ever wanting it indexed (a forum, a member
+area, a search page, an upload endpoint) also answers with bodies that carry no `<head>`:
+an RSS feed, a JSON reply, a redirect, a third-party app's 404. For those the meta says
+nothing. `NoindexPathsMiddleware` says it on the response instead: every response whose
+path starts with a configured prefix leaves with `X-Robots-Tag: noindex, nofollow`,
+whatever the body is. A header an inner layer already wrote (`keel_web.api_guard`, a
+view) is kept.
+
+```python
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "keel_seo.noindex_paths.NoindexPathsMiddleware",   # near the top: the last word on headers
+    ...
+]
+KEEL_SEO = {
+    "noindex_paths": ("/forum/",),            # default (): stamps nothing
+    "noindex_paths_robots": "noindex, nofollow",
+}
+```
+
+It is not access control and it is not `robots.txt`: the section stays reachable, and a
+crawler that fetches it reads on the answer that it is not to be indexed or followed.
+First consumed by prop-firm-review for its django-machina forum (v0.37.0).
+
 ## Intent registry (`keel_seo.intent`)
 
 Two pages competing for one search need is an architecture defect that only becomes
@@ -1004,4 +1031,7 @@ language in its own column. v0.30.0 stops paying for markets that only echo the
 primary one: each is sampled with sixty queries first, and on the measured
 distribution seven of sixteen earn a full crawl. v0.30.4 lets a seed line name its
 own other spellings — `binary option | binary options` — so a spelling group is
-part of the seed list rather than a hand-written CLI call outside the walk.
+part of the seed list rather than a hand-written CLI call outside the walk. v0.37.0 adds
+`keel_seo.noindex_paths`, an `X-Robots-Tag` on every response under the path prefixes a
+host never advertises, so a feed, a redirect or a third-party app's 404 says noindex
+without a `<head>` to say it in.
