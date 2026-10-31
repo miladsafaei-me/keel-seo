@@ -48,3 +48,36 @@ class LandingSitemapLastmodTests(TestCase):
     def test_none_when_neither_source_has_a_date(self):
         landing = Landing.objects.create(url="/bare/", title="Bare", is_indexable=True)
         self.assertIsNone(self.sitemap.lastmod(landing))
+
+
+def _fake_changefreq_hook(url):
+    return {"/": "daily", "/legal/": "yearly", "/odd/": "fortnightly"}.get(url)
+
+
+def _broken_changefreq_hook(url):
+    raise RuntimeError("boom")
+
+
+class LandingSitemapChangefreqTests(TestCase):
+    def setUp(self):
+        self.sitemap = LandingSitemap()
+
+    def test_monthly_without_a_hook(self):
+        landing = Landing.objects.create(url="/plain/", title="Plain", is_indexable=True)
+        self.assertEqual(self.sitemap.changefreq(landing), "monthly")
+
+    def test_the_hook_answers_per_url_and_unknown_values_fall_back(self):
+        home = Landing.objects.create(url="/", title="Home", is_indexable=True)
+        legal = Landing.objects.create(url="/legal/", title="Legal", is_indexable=True)
+        odd = Landing.objects.create(url="/odd/", title="Odd", is_indexable=True)
+        other = Landing.objects.create(url="/other/", title="Other", is_indexable=True)
+        with self.settings(KEEL_SEO={"changefreq_hook": "tests.test_sitemaps._fake_changefreq_hook"}):
+            self.assertEqual(self.sitemap.changefreq(home), "daily")
+            self.assertEqual(self.sitemap.changefreq(legal), "yearly")
+            self.assertEqual(self.sitemap.changefreq(odd), "monthly")
+            self.assertEqual(self.sitemap.changefreq(other), "monthly")
+
+    def test_a_failing_hook_keeps_the_default(self):
+        landing = Landing.objects.create(url="/plain/", title="Plain", is_indexable=True)
+        with self.settings(KEEL_SEO={"changefreq_hook": "tests.test_sitemaps._broken_changefreq_hook"}):
+            self.assertEqual(self.sitemap.changefreq(landing), "monthly")

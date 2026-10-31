@@ -17,6 +17,11 @@ key is optional and the defaults make the package work standalone:
         # genuinely changes often (so the sitemap emits a real <lastmod> for them
         # and marks them changefreq=hourly). Default: no dynamic-freshness pages.
         "lastmod_hook": "myapp.seo.build_lastmod_map",
+        # Dotted path to a callable taking one Landing URL and returning how often
+        # that page really changes: one of Django's sitemap values ("always",
+        # "hourly", "daily", "weekly", "monthly", "yearly", "never"), or None to
+        # leave the default (hourly for a lastmod_hook page, else monthly).
+        "changefreq_hook": "myapp.seo.changefreq_for",
         # Smallest number of URLs a routing directory needs before the directory
         # sitemap index links its own /<segment>.xml. A thinner directory keeps
         # its URLs (they move into /static-sitemap.xml) but earns no section file.
@@ -123,6 +128,7 @@ _DEFAULTS = {
     "adopt_existing": False,
     "cache_ttl": 300,
     "lastmod_hook": None,
+    "changefreq_hook": None,
     "sitemap_min_section_urls": 2,
     "freshness_enabled": False,
     "freshness_content_selector": "main",
@@ -162,6 +168,26 @@ def landing_lastmod_map():
         return import_string(dotted)() or {}
     except Exception:
         return {}
+
+
+CHANGEFREQ_VALUES = ("always", "hourly", "daily", "weekly", "monthly", "yearly", "never")
+
+
+def landing_changefreq(url):
+    """The host's ``changefreq_hook`` answer for ``url``, or None.
+
+    None when no hook is set, when it answers None or a value the sitemap
+    protocol does not know, or when it raises: the sitemap then keeps its
+    default rather than failing.
+    """
+    dotted = seo_setting("changefreq_hook")
+    if not dotted:
+        return None
+    try:
+        value = import_string(dotted)(url)
+    except Exception:
+        return None
+    return value if value in CHANGEFREQ_VALUES else None
 
 
 def gsc_data_dir():

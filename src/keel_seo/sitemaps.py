@@ -16,7 +16,7 @@ package; a host composes its ``sitemaps`` dict from ``LandingSitemap`` plus thos
 """
 from django.contrib.sitemaps import Sitemap
 
-from .config import landing_lastmod_map
+from .config import landing_changefreq, landing_lastmod_map
 from .models import Landing
 
 
@@ -50,6 +50,11 @@ class LandingSitemap(Sitemap):
         return "" if obj.url == "/" else obj.url
 
     def changefreq(self, obj: Landing) -> str:
+        # The host's own answer wins: only it knows how often a page's content
+        # really changes (``changefreq_hook``).
+        stated = landing_changefreq(obj.url)
+        if stated:
+            return stated
         # Pages the host reports in the lastmod map re-render as their underlying
         # data changes, so they churn far more often than static marketing pages.
         return "hourly" if (obj.url.rstrip("/") or "/") in self._lastmod_map() else "monthly"
