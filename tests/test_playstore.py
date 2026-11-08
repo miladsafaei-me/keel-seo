@@ -85,3 +85,35 @@ class ComplaintTests(unittest.TestCase):
                    {"text": "great"}]
         terms = dict(complaint_terms(reviews))
         self.assertEqual(terms.get("many ads"), 2)
+
+
+class IdeaTests(unittest.TestCase):
+    def _scored(self, phrase, apps):
+        return score_keyword(phrase, apps)
+
+    def test_selling_apps_raise_monetization(self):
+        from keel_seo.playstore.ideas import app_opportunity
+        paid = _app("Fish Tank Log", 50_000, 3.5, 30)
+        paid.update(offersIAP=True, inAppProductPrice="$4.99 - $29.99 per item")
+        free = _app("Fish Tank Log", 50_000, 3.5, 30)
+        a = app_opportunity(self._scored("fish tank log", [paid]), {"fish", "tank"})
+        b = app_opportunity(self._scored("fish tank log", [free]), {"fish", "tank"})
+        self.assertGreater(a["app_score"], b["app_score"])
+        self.assertEqual(a["max_price"], 29.99)
+
+    def test_word_no_listing_uses_is_a_brand(self):
+        from keel_seo.playstore.ideas import brand_word
+        apps = [_app("Prop Firm Tracker", 100, None, 3, "track your prop firm challenge")]
+        self.assertEqual(brand_word("acmefunds prop firm", apps, {"prop", "firm"}), "acmefunds")
+        self.assertEqual(brand_word("prop firm challenge", apps, {"prop", "firm"}), "")
+        self.assertEqual(brand_word("prop firm challenge", apps, {"prop", "firm"},
+                                    frozenset({"challenge"})), "challenge")
+
+    def test_same_apps_make_one_idea(self):
+        from keel_seo.playstore.ideas import group_ideas
+        rows = [{"phrase": "a b", "app_score": 50}, {"phrase": "a b c", "app_score": 40},
+                {"phrase": "x y", "app_score": 30}]
+        ideas = group_ideas(rows, {"a b": ["1", "2", "3"], "a b c": ["1", "2", "4"],
+                                   "x y": ["7", "8"]})
+        self.assertEqual([i["idea"] for i in ideas], ["a b", "x y"])
+        self.assertEqual(ideas[0]["phrases_count"], 2)

@@ -22,8 +22,12 @@ from concurrent.futures import ThreadPoolExecutor
 from .client import DEFAULT_RATE, Blocked, Cache, PlayClient
 from .complaints import complaint_terms
 from .expand import expand
+from .ideas import group_ideas
 from .report import CAVEAT, app_rows, keyword_rows, write_all
-from .score import WEAK_RATING, score_keyword
+from .score import WEAK_RATING, score_keyword, tokens
+
+# Below this share of top apps inside the --genres list, a phrase is off topic.
+ON_TOPIC_SHARE = 0.3
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,6 +36,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", action="append", required=True,
                         help="a seed phrase; repeat for several")
     parser.add_argument("--out", required=True, help="directory for the outputs")
+    parser.add_argument("--brands", default="",
+                        help=("comma-separated brand names, or a file of one per line; "
+                              "a phrase naming one is scored as a brand query"))
+    parser.add_argument("--genres", default="",
+                        help=("comma-separated Play categories that are on topic, e.g. "
+                              "'Finance,Education'; a phrase whose top apps are mostly "
+                              "elsewhere is marked off topic and left out of the ideas"))
+    parser.add_argument("--name", default="",
+                        help="output file stem (default: the first seed)")
     parser.add_argument("--hl", default="en", help="language to ask in (default en)")
     parser.add_argument("--gl", default="us", help="store country (default us)")
     parser.add_argument("--depth", type=int, default=2,
@@ -78,31 +91,60 @@ def main(argv=None) -> int:
         say(f"{len(ranks)} distinct apps in the top {args.top}; reading details")
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             apps = dict(zip(ranks, pool.map(lambda a: _safe(client.details, a, say), ranks)))
-        scores = [score_keyword(p, [apps.get(r["appId"]) for r in rows[: args.top]],
-                                top=args.top) for p, rows in results.items()]
-        keywords = keyword_rows(scores, phrases)
+        genres = {g.strip().lower() for g in args.genres.split(",") if g.strip()}
+        off_topic, scores = set(), []
+        for phrase, rows in results.items():
+            top = [apps.get(r["appId"]) for r in rows[: args.top]]
+            if genres:
+                inside = [a for a in top if a and (a.get("genre") or "").lower() in genres]
+                if len([a for a in top if a]) and len(inside) < ON_TOPIC_SHARE * len(
+                        [a for a in top if a]):
+                    off_topic.add(phrase)
+                top = inside
+            scores.append(score_keyword(phrase, top, top=args.top))
+        seed_words = set().union(*(tokens(seed) for seed in args.seed))
+        keywords = keyword_rows(scores, phrases, seed_words, _brands(args.brands))
+        for row in keywords:
+            if row["phrase"] in off_topic:
+                row["app_score"], row["verdict"] = None, "off topic"
+        keywords.sort(key=lambda r: (r["verdict"] == "off topic", -(r["app_score"] or -1)))
+        ideas = group_ideas([r for r in keywords if r["verdict"] != "off topic"],
+                            {p: [r["appId"] for r in rows[: args.top]]
+                                       for p, rows in results.items()})
         complaints, terms = _complaints(client, keywords, scores, apps, args, say)
     except Blocked as exc:
         say(f"STOPPED: {exc}. Everything fetched is cached; rerun later to resume.")
         return 2
     meta = {
         "seeds": args.seed, "hl": args.hl, "gl": args.gl,
-        "date": dt.date.today().isoformat(), "phrases": len(keywords),
+        "date": dt.date.today().isoformat(), "phrases": len(keywords), "ideas": len(ideas),
+        "genres": sorted(genres), "off_topic_phrases": len(off_topic),
         "apps": len(ranks), "top_per_phrase": args.top, "depth": args.depth,
         "network_calls": client.calls, "cache_hits": client.cache.hits,
         "errors": client.errors, "complaint_reviews": len(complaints),
         "source": "Google Play autocomplete (batchexecute IJ4APc) + google-play-scraper",
     }
-    paths = write_all(args.out, args.seed[0], meta, keywords,
+    paths = write_all(args.out, args.name or args.seed[0], meta, ideas, keywords,
                       app_rows(apps, ranks), complaints, terms)
     say(f"\n{CAVEAT}\n")
-    print("rank  opp  demand weak  phrase")
-    for i, row in enumerate(keywords[:25], 1):
-        print(f"{i:>4} {row['opportunity']:>5} {row['demand']:>6} {row['weakness']:>5}  "
-              f"{row['phrase']}  [{row['reasons']}]")
+    print("rank  app  demand weak  money  idea")
+    for i, row in enumerate(ideas[:25], 1):
+        print(f"{i:>4} {row['app_score'] if row['app_score'] is not None else '-':>5} "
+              f"{row['demand']:>6} {row['weakness']:>5} {row['monetization']:>5}  "
+              f"{row['idea']} ({row['phrases_count']} phrases, {row['verdict']})")
     for kind, path in paths.items():
         print(f"{kind}: {path}")
     return 0
+
+
+def _brands(value: str) -> frozenset[str]:
+    import os  # noqa: PLC0415
+    if value and os.path.isfile(value):
+        with open(value, encoding="utf-8") as handle:
+            items = handle.read().splitlines()
+    else:
+        items = value.split(",")
+    return frozenset(i.strip().lower() for i in items if i.strip() and not i.startswith("#"))
 
 
 def _safe(fn, arg, say):

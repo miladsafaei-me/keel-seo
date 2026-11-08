@@ -36,8 +36,9 @@ USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) keel-seo/playstore"
 
 UPDATED_ON = re.compile(r"Updated on</div><div[^>]*>([^<]+)<")
 
-DEFAULT_RATE = 2.0
+DEFAULT_RATE = 1.5
 BREAKER_LIMIT = 8
+RATE_LIMIT_BACKOFF = (20.0, 60.0, 120.0)
 
 MISSING_MESSAGE = (
     "Google Play search, details and reviews need google-play-scraper. "
@@ -66,6 +67,11 @@ class Throttle:
         delay = slot - time.monotonic()
         if delay > 0:
             time.sleep(delay)
+
+    def slow_down(self, floor_rate: float = 0.25) -> None:
+        """Halve the rate, never below ``floor_rate`` requests per second."""
+        with self._lock:
+            self.interval = min(max(self.interval * 2, 0.5), 1.0 / floor_rate)
 
 
 class Cache:
@@ -166,6 +172,14 @@ class PlayClient:
             try:
                 value = fn()
             except Exception as exc:  # noqa: BLE001 - classified below
+                if _is_rate_limited(exc):
+                    # Measured 2026-11-08: at 2 q/s across ~900 calls the store
+                    # began answering 429. A quick retry only deepens it, so the
+                    # whole client slows down and this call waits it out.
+                    self._throttle.slow_down()
+                    last = exc
+                    time.sleep(RATE_LIMIT_BACKOFF[min(attempt, len(RATE_LIMIT_BACKOFF) - 1)])
+                    continue
                 if _is_not_found(exc):
                     value = None
                     break
@@ -280,3 +294,9 @@ def _library():
 
 def _is_not_found(exc: Exception) -> bool:
     return type(exc).__name__ == "NotFoundError" or "404" in str(exc)
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    # google-play-scraper reports a 429 as "App not found. Status code 429",
+    # so the status code is checked before anything reads "not found".
+    return "429" in str(exc) or getattr(exc, "code", None) == 429

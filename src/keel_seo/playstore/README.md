@@ -10,9 +10,11 @@ answered by weak apps. Keyless, no model call, a few hundred requests per seed.
 pip install 'keel-seo[playstore]'        # google-play-scraper + openpyxl
 python -m keel_seo.playstore --seed "prop firm" --out <dir>
 python -m keel_seo.playstore --seed "aquarium" --seed "fish tank" --gl gb --out <dir>
+python -m keel_seo.playstore --name prop --brands brands.txt \
+    --genres "Finance,Education,Tools,Productivity,Business" --seed "prop firm" --out <dir>
 ```
 
-Writes `<seed>_playstore_<gl>_<date>.json`, `.csv` and `.xlsx` into `<dir>`, plus
+Writes `<seed>_playstore_<gl>_<date>.json`, `.csv` and `.xlsx` into `<dir>` (`--name` changes the stem), plus
 `.playstore-cache.jsonl`, which makes a rerun or a resumed run free. Keyword data
 never goes to git: point `--out` at a gitignored folder.
 
@@ -27,7 +29,16 @@ never goes to git: point `--out` at a gitignored folder.
 3. **Score.** Only apps whose title and short description name half the phrase
    count as relevant; unrelated giants that fill thin result pages are excluded
    from demand. See `score.py` for the formula and its weights.
-4. **Complaints.** The 1 to 3 star reviews of weak, installed, relevant apps
+4. **App score.** Each phrase also gets a builder's score (`ideas.py`): 35%
+   demand, 30% weakness, 35% monetization (do the relevant apps sell anything,
+   and does one with real reach). A brand query is cut to a quarter, and the
+   verdict column says `build candidate`, `worth a look`, `weak`, a brand query,
+   or `unserved, judge by hand`. Phrases Play answered with mostly the same apps
+   are grouped into one idea. With `--genres`, a phrase whose top apps are
+   mostly in other Play categories is marked `off topic` and left out: measured
+   2026-11-08, "trading simulator" drifted into car games and "risk calculator"
+   into medical apps.
+5. **Complaints.** The 1 to 3 star reviews of weak, installed, relevant apps
    behind the best phrases are collected, and their repeated two-word phrases
    counted. Reading them is a person's job.
 
@@ -35,7 +46,8 @@ never goes to git: point `--out` at a gitignored folder.
 
 | Sheet | One row per |
 |---|---|
-| Keywords | phrase, ranked by opportunity, with the reasons and its top apps |
+| Ideas | app idea (phrases sharing the same top apps), ranked by app score |
+| Keywords | phrase, ranked by app score, with its verdict, reasons and top apps |
 | Apps | app seen in any top list, with every phrase it ranks for |
 | Complaint terms | repeated two-word phrase in one app's low-star reviews |
 | Complaints | low-star review, most helpful first |

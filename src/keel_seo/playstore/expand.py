@@ -34,7 +34,8 @@ class Phrase:
 
 
 def norm(text: str) -> str:
-    return " ".join(text.lower().split())
+    # Store phrases sometimes carry a long dash; it is stored as a plain hyphen.
+    return " ".join(text.replace("\u2014", "-").replace("\u2013", "-").lower().split())
 
 
 def expand(client, seeds: list[str], depth: int = 2, drill: int = 8,

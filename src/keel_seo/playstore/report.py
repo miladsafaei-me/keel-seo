@@ -11,16 +11,24 @@ import json
 import os
 import re
 
+from .ideas import app_opportunity
+
 CAVEAT = ("Google Play publishes no search volume. Demand here is the installs of "
           "the apps Play ranks for a phrase; opportunity ranks phrases within this "
           "run only and is not a forecast of downloads or revenue.")
 
 KEYWORD_COLUMNS = [
-    ("phrase", 34), ("opportunity", 12), ("demand", 9), ("weakness", 10),
+    ("phrase", 34), ("app_score", 10), ("verdict", 22), ("idea", 30),
+    ("monetization", 12), ("max_price", 10), ("brand", 12), ("opportunity", 12), ("demand", 9), ("weakness", 10),
     ("installs_total", 15), ("installs_median", 15), ("rating_avg", 10),
     ("relevant_share", 12), ("weak_rating_share", 12), ("stale_share", 10),
     ("strong_incumbents", 11), ("unserved", 10), ("iap_share", 9), ("paid_share", 9),
     ("offered_by", 10), ("level", 7), ("reasons", 60), ("top_apps", 70),
+]
+IDEA_COLUMNS = [
+    ("idea", 34), ("app_score", 10), ("verdict", 22), ("phrases_count", 10),
+    ("demand", 9), ("weakness", 10), ("monetization", 12), ("max_price", 10),
+    ("installs_total", 15), ("reasons", 60), ("top_apps", 70), ("phrases", 80),
 ]
 APP_COLUMNS = [
     ("title", 34), ("appId", 34), ("realInstalls", 14), ("installs", 13),
@@ -28,6 +36,11 @@ APP_COLUMNS = [
     ("offersIAP", 9), ("inAppProductPrice", 26), ("containsAds", 10),
     ("genre", 14), ("developer", 28), ("ranks_for", 60), ("url", 50),
 ]
+
+
+def plain(text):
+    """Store text with its long dashes turned into plain hyphens."""
+    return text.replace("\u2014", "-") if isinstance(text, str) else text
 
 
 def slugify(text: str) -> str:
@@ -41,7 +54,8 @@ def _date(stamp) -> str:
         return ""
 
 
-def keyword_rows(scores, phrases) -> list[dict]:
+def keyword_rows(scores, phrases, seed_words: set[str],
+                 brands: frozenset[str] = frozenset()) -> list[dict]:
     meta = {p.text: p for p in phrases}
     rows = []
     for s in scores:
@@ -58,11 +72,12 @@ def keyword_rows(scores, phrases) -> list[dict]:
             "iap_share": round(s.iap_share, 2), "paid_share": round(s.paid_share, 2),
             "offered_by": p.offered_by if p else 0, "level": p.level if p else 0,
             "reasons": s.reasons,
-            "top_apps": " | ".join(f"{a.get('title')} ({a.get('installs') or '?'}, "
+            "top_apps": " | ".join(f"{plain(a.get('title'))} ({a.get('installs') or '?'}, "
                                    f"{round(a['score'], 1) if a.get('score') else '-'})"
                                    for a in (s.relevant or s.apps)[:5]),
+            **app_opportunity(s, seed_words, brands),
         })
-    return sorted(rows, key=lambda r: -r["opportunity"])
+    return sorted(rows, key=lambda r: (-(r["app_score"] or -1), -r["opportunity"]))
 
 
 def app_rows(apps: dict, ranks: dict) -> list[dict]:
@@ -70,7 +85,7 @@ def app_rows(apps: dict, ranks: dict) -> list[dict]:
     for app_id, a in apps.items():
         if not a:
             continue
-        row = {k: a.get(k) for k, _ in APP_COLUMNS}
+        row = {k: plain(a.get(k)) for k, _ in APP_COLUMNS}
         row["updated"] = _date(a.get("updated"))
         row["score"] = round(a["score"], 2) if a.get("score") else None
         row["ranks_for"] = " | ".join(f"{q} #{pos}" for q, pos in ranks.get(app_id, [])[:8])
@@ -79,25 +94,25 @@ def app_rows(apps: dict, ranks: dict) -> list[dict]:
     return sorted(rows, key=lambda r: -(r.get("realInstalls") or 0))
 
 
-def write_all(outdir: str, seed: str, meta: dict, keywords: list[dict],
+def write_all(outdir: str, seed: str, meta: dict, ideas: list[dict], keywords: list[dict],
               apps: list[dict], complaints: list[dict], terms: list[dict]) -> dict:
     os.makedirs(outdir, exist_ok=True)
     base = os.path.join(outdir, f"{slugify(seed)}_playstore_{meta['gl']}_{meta['date']}")
     paths = {"json": base + ".json", "csv": base + ".csv", "xlsx": base + ".xlsx"}
     with open(paths["json"], "w", encoding="utf-8") as handle:
-        json.dump({"meta": meta, "caveat": CAVEAT, "keywords": keywords, "apps": apps,
+        json.dump({"meta": meta, "caveat": CAVEAT, "ideas": ideas, "keywords": keywords, "apps": apps,
                    "complaints": complaints, "complaint_terms": terms},
                   handle, ensure_ascii=False, indent=1, default=str)
     with open(paths["csv"], "w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=[c for c, _ in KEYWORD_COLUMNS])
         writer.writeheader()
         writer.writerows(keywords)
-    if not _write_xlsx(paths["xlsx"], meta, keywords, apps, complaints, terms):
+    if not _write_xlsx(paths["xlsx"], meta, ideas, keywords, apps, complaints, terms):
         paths.pop("xlsx")
     return paths
 
 
-def _write_xlsx(path, meta, keywords, apps, complaints, terms) -> bool:
+def _write_xlsx(path, meta, ideas, keywords, apps, complaints, terms) -> bool:
     try:
         from openpyxl import Workbook  # noqa: PLC0415 - optional extra
         from openpyxl.styles import Alignment, Font, PatternFill  # noqa: PLC0415
@@ -126,7 +141,8 @@ def _write_xlsx(path, meta, keywords, apps, complaints, terms) -> bool:
             ws.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{len(rows) + 1}"
         return ws
 
-    sheet("Keywords", KEYWORD_COLUMNS, keywords, first=True)
+    sheet("Ideas", IDEA_COLUMNS, ideas, first=True)
+    sheet("Keywords", KEYWORD_COLUMNS, keywords)
     sheet("Apps", APP_COLUMNS, apps)
     sheet("Complaint terms", [("app", 34), ("appId", 34), ("term", 26), ("reviews", 9)], terms)
     ws = sheet("Complaints", [("app", 30), ("appId", 30), ("score", 7), ("at", 11),

@@ -21,7 +21,7 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
   gate; `guarded_prefixes` since v0.7.1), `keel_seo.keywords` (since v0.12.0: the
   market-side half — an autocomplete-only keyword-universe crawler, its lexical
   clustering and its priority score; no key, no model, see README's "Keyword
-  universe" section), `keel_seo.playstore` (since v0.39.0: the Google Play
+  universe" section), `keel_seo.playstore` (since v0.39.0, app score since v0.40.0: the Google Play
   keyword-gap finder - Play autocomplete expansion, top-app measurement, a
   demand-times-weakness score over relevant apps only, and low-star review terms;
   see its own README). Since v0.29.0 it also owns three defaults a consumer would
