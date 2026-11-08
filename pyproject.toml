@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keel-seo"
-version = "0.38.0"
-description = "Keel SEO — reusable Landing Registry, sitemap, noindex-by-default gate, intent registry, critical-CSS engine, a complete Google Search Console API client (Search Analytics, URL Inspection, Indexing, Sitemaps, Sites), and an autocomplete-only keyword-universe crawler with lexical clustering."
+version = "0.39.0"
+description = "Keel SEO — reusable Landing Registry, sitemap, noindex-by-default gate, intent registry, critical-CSS engine, a complete Google Search Console API client (Search Analytics, URL Inspection, Indexing, Sitemaps, Sites), and an autocomplete-only keyword-universe crawler with lexical clustering, and a Google Play keyword-gap finder."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Milad Safaei" }]
@@ -31,6 +31,9 @@ proxies = [
 # JSON, CSV and Markdown are always written, so a missing openpyxl costs the
 # workbook and nothing else.
 xlsx = ["openpyxl>=3.0"]
+# The Google Play keyword-gap finder (keel_seo.playstore). google-play-scraper
+# parses search, app details and reviews; the autocomplete call is our own.
+playstore = ["google-play-scraper>=1.2", "openpyxl>=3.0"]
 
 [project.urls]
 Homepage = "https://github.com/miladsafaei-me/keel-seo"
