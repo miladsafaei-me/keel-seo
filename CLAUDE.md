@@ -1,25 +1,26 @@
-# keel-seo — package guide
+# keel-seo - package guide
 
 Part of the **Keel** platform (see keel-kit `PLATFORM.md`). This is a Bucket-2
 reusable Django app: the Landing registry + sitemap + noindex gate + critical-CSS
-engine. English only; no banner comments; CSS variables only in any styling.
+engine. The global code rules (English only, no banner comments, CSS custom properties
+only) apply from `~/.claude/CLAUDE.md`, section "Code, every project".
 
 ## Task tracking
 
-Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), not in chat memory. Every pending task — priority, prerequisites/dependencies, enough context to resume cold — goes there before starting new work; remove a task from TODO.md the moment it's done.
+Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), not in chat memory. Every pending task - priority, prerequisites/dependencies, enough context to resume cold - goes there before starting new work; remove a task from TODO.md the moment it's done.
 
-## Boundaries — what is here vs what stays in the host
+## Boundaries - what is here vs what stays in the host
 
 - **Here (generic):** the `Landing` model, `LandingSitemap`, the directory-grouped
   sitemap engine (`sitemap_directory.py`: `/sitemap.xml` index + one `/<segment>.xml`
   per routing directory + `/static-sitemap.xml`), the `landing` context processor, the
   robots-meta partial, cache-invalidation signals, `categorize_landing`, the
   `gen_critical_css.js` engine, `keel_seo.freshness` (since v0.6.0: the content-hashing
-  freshness engine, the `keel_seo_freshness` command, the `{% last_updated %}` tag —
+  freshness engine, the `keel_seo_freshness` command, the `{% last_updated %}` tag -
   see README's "Content freshness" section), `keel_seo.intent` (since v0.7.0: the
   one-intent-one-URL registry, its nine invariants and the `keel_seo_intent_check`
   gate; `guarded_prefixes` since v0.7.1), `keel_seo.keywords` (since v0.12.0: the
-  market-side half — an autocomplete-only keyword-universe crawler, its lexical
+  market-side half - an autocomplete-only keyword-universe crawler, its lexical
   clustering and its priority score; no key, no model, see README's "Keyword
   universe" section), `keel_seo.playstore` (since v0.39.0, app score since v0.40.0: the Google Play
   keyword-gap finder - Play autocomplete expansion, top-app measurement, a
@@ -30,30 +31,30 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
   in `cluster.build`), the **target markets** are a package default of sixteen
   countries each paired with the language it searches in (`keywords/markets.py`,
   overridable per project with `KEEL_SEO["keyword_markets"]`, the
-  `KEEL_SEO_KEYWORD_MARKETS` env var, or `--markets`) — **crawled in full only
+  `KEEL_SEO_KEYWORD_MARKETS` env var, or `--markets`) - **crawled in full only
   where they earn it**: the primary market (list head, US) is the reference and
   every other market is sampled with 60 queries first and kept only if ≥22% of
   its answers to *those same queries* are unseen in the primary's
   (`crawl.probe_market` + `worth_crawling`; the reference is the primary's own
   sample, not its universe, or the threshold drifts with `--levels`). The 22%
-  is measured — see the distribution in `crawl.PROBE_NOVELTY_SHARE`, kept in a
-  test — and it replaced a guess of 25% that would have discarded Germany,
+  is measured - see the distribution in `crawl.PROBE_NOVELTY_SHARE`, kept in a
+  test - and it replaced a guess of 25% that would have discarded Germany,
   France and Spain. Do not "simplify" that back to crawling every market, and
-  do not drop a probed market's phrases — they are paid for and merged, with the
+  do not drop a probed market's phrases - they are paid for and merged, with the
   Run sheet naming which markets were sampled rather than crawled. And every
   keyword's
-  **language** is named deterministically (`keywords/language.py` — script,
+  **language** is named deterministically (`keywords/language.py` - script,
   vocabulary, then diacritics; never a model, and never a guess where the
-  evidence is a shared accent). **A harvest never asks from the machine running it** —
+  evidence is a shared accent). **A harvest never asks from the machine running it** -
   since v0.28.0 `--proxies auto` is the default and `--proxies off` is refused
   with no override, in the single-seed CLI and the batch walker alike, because
   Google's block is IP-wide and outlasts the run (measured 2026-09-04: refused
   after 3,909 requests at the throttled 6 q/s, on a host carrying six live
   sites). Do not reintroduce a direct path, and do not default it back to run a
-  quick test. **Proxy rotation itself is NOT here** — it belongs to keel-crawler
+  quick test. **Proxy rotation itself is NOT here** - it belongs to keel-crawler
   (`keel_crawler.proxy.pool`), imported through the `proxies` extra, which a real
   harvest now requires; `keywords/proxying.py` is only the seam, the egress rule,
-  and the endpoint-specific accept test. And `keel_seo.gsc` — the connector, query
+  and the endpoint-specific accept test. And `keel_seo.gsc` - the connector, query
   registry, the recurring `pulse` measurement engine (since v0.8.0), the **complete
   Search Console API client** (since v0.11.0: `auth` for shared credentials/transport,
   `analytics` for the full Search Analytics surface, `inspection` for URL Inspection,
@@ -65,21 +66,30 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
   `static/keel_seo/gsc/`): pure data transforms, the live-API path, context
   building/insight dismissals, and the routes. Mount with
   `include("keel_seo.gsc.urls")`.
-- **Stays in the host (Bucket-0):** the intent *vocabulary* — what a site's entities
-  and frames are, and which URL owns which need — because nothing generic can guess it;
+- **Stays in the host (Bucket-0):** the intent *vocabulary* - what a site's entities
+  and frames are, and which URL owns which need - because nothing generic can guess it;
   keel-seo owns the invariants and the gate, never the entries. Also any
-  dynamic-freshness computation *the host wants to override* (wired via `KEEL_SEO["lastmod_hook"]` — `LandingSitemap.lastmod` falls
+  dynamic-freshness computation *the host wants to override* (wired via `KEEL_SEO["lastmod_hook"]` - `LandingSitemap.lastmod` falls
   back to `keel_seo.freshness`'s `content_modified_at` when the hook has nothing), the
-  content sitemaps (blog/news/archives — those live in the content package),
+  content sitemaps (blog/news/archives - those live in the content package),
   `extract_critical_css.js`, the per-project critical-CSS `PAGES`/`CHROME` manifest,
-  generating the GSC dashboard/insights JSON (a host's own offline exporter tooling —
+  generating the GSC dashboard/insights JSON (a host's own offline exporter tooling -
   e.g. SignalBots' `tools/gsc/*`), and any query→cluster→ideation logic (reached from
   the dashboard only through the explicit `KEEL_SEO["gsc_queue_hook"]` seam).
+
+## Known issue: the YouTube client exists twice
+
+`keel_seo/youtube/` (`api.py`, `channels.py`, `feed.py`, `store.py`, `analysis.py`) holds a
+quota-aware YouTube Data API v3 client, and keel-crawler holds a second one in
+`keel_crawler/youtube/api.py` with the same quota logic. The ownership map in keel-kit
+names neither as the owner, and the consolidation is not done (decision of 2026-11-13:
+record the duplication, no code change yet). Before adding a YouTube fetch or quota feature,
+check both copies and say in the change which one you extended.
 
 ## Editing rule (drift prevention)
 
 When a consuming project has this installed, its copy of these files is **not** editable
-in that project — change them **here**, bump the version, and let the project pull the
+in that project - change them **here**, bump the version, and let the project pull the
 new version. Project-specific behavior belongs in `KEEL_SEO` config hooks, never in a
 fork of this code.
 
@@ -91,7 +101,7 @@ fork of this code.
 | `KEEL_SEO["landing_db_table"]` | `models.Landing.Meta` | `keel_seo_landing` | existing table name to adopt |
 | `KEEL_SEO["cache_ttl"]` | `context_processors.landing` | 300 | seconds |
 | `KEEL_SEO["sitemap_min_section_urls"]` | `sitemap_directory._grouped` | 2 | URLs a directory needs to earn its own `/<segment>.xml` |
-| critical-CSS `PAGES`/`CHROME` | `tools/gen_critical_css.js` | — | per-project manifest |
+| critical-CSS `PAGES`/`CHROME` | `tools/gen_critical_css.js` | - | per-project manifest |
 | `KEEL_SEO["freshness_enabled"]` | `freshness.record`, `management/commands/keel_seo_freshness.py` | False | opt in to the content-hashing render pass |
 | `KEEL_SEO["freshness_content_selector"]` | `freshness.normalize_content` | `"main"` | tag name / `#id` / `.class` of the region to hash |
 | `KEEL_SEO["freshness_strip_patterns"]` | `freshness._resolved_strip_patterns` | None → built-ins only | extra `(regex, replacement)` pairs, appended to `DEFAULT_STRIP_PATTERNS` |
@@ -107,8 +117,8 @@ fork of this code.
 
 ## Tests
 
-`tests/` (added v0.6.0) is a minimal standalone Django project — `tests/settings.py`
-plus a tiny `tests/hostapp` fixture app — that lets this package's own test suite run
+`tests/` (added v0.6.0) is a minimal standalone Django project - `tests/settings.py`
+plus a tiny `tests/hostapp` fixture app - that lets this package's own test suite run
 without any consumer project. Run from the repo root, with keel-seo installed
 (editable is fine) into whatever interpreter runs it:
 
@@ -122,6 +132,6 @@ only when a test genuinely needs a rendered page to exercise against.
 ## Adoption note (host migration)
 
 Setting `landing_db_table` to an existing table lets a host adopt keel-seo with only a
-Django state migration (`AlterModelTable` / `RenameModel`) — no row copy. Sequence any
+Django state migration (`AlterModelTable` / `RenameModel`) - no row copy. Sequence any
 model-move behind the host's canary deploy; verify `sitemap.xml` builds and a known
 noindex page still emits `noindex,nofollow` before cutover.
