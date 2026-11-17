@@ -25,7 +25,7 @@ from keel_seo.keywords.crawl import (PROBE_NOVELTY_FLOOR, PROBE_NOVELTY_SHARE,
                                      seed_spelling, seed_tokens, squash,
                                      worth_crawling)
 from keel_seo.keywords.grammar import (BRANCH, DRILL, SEED, expansions,
-                                       star_variants)
+                                       grammar_for, star_variants)
 from keel_seo.keywords.proxying import (DIRECT_REFUSAL, DirectEgressRefused,
                                         accept_suggestions,
                                         require_pooled_egress)
@@ -111,6 +111,130 @@ class GrammarTests(unittest.TestCase):
 
     def test_empty_term_yields_nothing(self):
         self.assertEqual(expansions("   ", SEED), [])
+
+
+class EnglishGrammarIsPinned(unittest.TestCase):
+    """Native grammars must not move a single English query.
+
+    The fingerprints are of the query lists the grammar produced before native
+    grammars existed (v0.40.0): same queries, same order.
+    """
+
+    PINNED = (
+        ("quotex", SEED, {}, 378,
+         "2f08cac414738c01c1174486a2588eb770470b6cec1b01cf5affa23455b31760"),
+        ("turkey startup visa", SEED, {}, 382,
+         "681a73bc4c4432c657d518ed84ce3026fbd037cb2c9ac58ec6f43d22b377da43"),
+        ("quotex signal bot", BRANCH, {}, 57,
+         "2fae082ba4405b42c18b3e93b02e88fce919d766b10462f0a1c9d887e4952b33"),
+        ("quotex app", DRILL, {}, 26,
+         "791647ff75012a6977fbccbe51d78b7774bfa797d833012d3b758b24919479a3"),
+        ("quotex", SEED, {"tight": False, "wildcards": True}, 330,
+         "9fd17a2295b8e880362bd155246f9a4cdb128ff54d01a73a594056cc634b3064"),
+    )
+
+    def test_english_empty_and_unknown_languages_ask_the_pinned_queries(self):
+        import hashlib
+
+        for term, tier, options, count, digest in self.PINNED:
+            for language in ("", "en", "en-US", "pt", "zz"):
+                queries = expansions(term, tier, language=language, **options)
+                self.assertEqual(len(queries), count, (term, tier, language))
+                self.assertEqual(
+                    hashlib.sha256("\n".join(queries).encode()).hexdigest(),
+                    digest, (term, tier, language))
+
+    def test_the_default_is_english(self):
+        self.assertEqual(expansions("quotex", SEED),
+                         expansions("quotex", SEED, language="en"))
+
+
+class NativeGrammarTests(unittest.TestCase):
+    def test_alphabets_are_the_ones_each_language_writes(self):
+        self.assertEqual(len(grammar_for("fa").letters), 33)
+        self.assertIn("آ", grammar_for("fa").letters)
+        self.assertIn("ک", grammar_for("fa").letters)
+        self.assertIn("ی", grammar_for("fa").letters)
+        self.assertEqual(len(grammar_for("ar").letters), 28)
+        self.assertIn("ك", grammar_for("ar").letters)
+        self.assertIn("ي", grammar_for("ar").letters)
+        self.assertEqual(len(grammar_for("ru").letters), 33)
+        self.assertIn("ё", grammar_for("ru").letters)
+        self.assertEqual(len(grammar_for("de").letters), 30)
+        self.assertEqual(len(grammar_for("es").letters), 27)
+
+    def test_the_region_subtag_does_not_matter(self):
+        self.assertIs(grammar_for("fa-IR"), grammar_for("fa"))
+        self.assertIs(grammar_for("DE_at"), grammar_for("de"))
+
+    def test_word_lists_are_a_usable_size_and_free_of_repeats(self):
+        for code in ("fa", "ar", "ru", "de", "es"):
+            grammar = grammar_for(code)
+            for words in (grammar.prefix_words, grammar.suffix_words):
+                self.assertTrue(20 <= len(words) <= 40, (code, len(words)))
+                self.assertEqual(len(words), len(set(words)), code)
+
+    def test_persian_seed_gets_persian_letters_and_words(self):
+        term = "تک ویزا ترکیه"
+        queries = set(expansions(term, SEED, language="fa"))
+        self.assertIn(f"{term} پ", queries, "Persian spaced suffix missing")
+        self.assertIn(f"{term}ی", queries, "Persian tight suffix missing")
+        self.assertIn(f"چ {term}", queries, "Persian spaced prefix missing")
+        self.assertIn(f"{term} چیست", queries, "Persian suffix word missing")
+        self.assertIn(f"شرایط {term}", queries, "Persian prefix word missing")
+        self.assertIn(f"{term} a", queries, "Latin sweep must follow the native one")
+        self.assertNotIn(f"{term}a", queries, "no Latin letter glued to Persian")
+        self.assertNotIn(f"how {term}", queries, "English words leaked in")
+        self.assertIn(f" {term} پ", queries, "leading-space family kept")
+        self.assertIn("تک * ویزا ترکیه", queries, "star family kept")
+
+    def test_the_native_sweep_comes_before_the_latin_one(self):
+        queries = expansions("тест", DRILL, language="ru")
+        self.assertEqual(queries[0], "тест а")
+        self.assertEqual(queries[33], "тест a")
+        self.assertEqual(len(queries), 33 + 26)
+
+    def test_russian_seed_gets_cyrillic_letters_and_words(self):
+        term = "стартап виза турция"
+        queries = set(expansions(term, SEED, language="ru"))
+        self.assertIn(f"{term} ё", queries)
+        self.assertIn(f"как {term}", queries)
+        self.assertIn(f"{term} цена", queries)
+        self.assertIn(f"{term} b", queries)
+
+    def test_german_seed_gets_umlauts_and_german_words(self):
+        queries = set(expansions("startup visum", SEED, language="de"))
+        self.assertIn("startup visum ä", queries)
+        self.assertIn("startup visumß", queries)
+        self.assertIn("wie startup visum", queries)
+        self.assertIn("startup visum kosten", queries)
+        self.assertNotIn("how startup visum", queries)
+
+    def test_branch_and_drill_tiers_speak_the_language_too(self):
+        branch = set(expansions("تک ویزا", BRANCH, language="fa"))
+        self.assertIn("تک ویزا ژ", branch)
+        self.assertIn("نحوه تک ویزا", branch)
+        self.assertIn("تک * ویزا", branch)
+        drill = expansions("visado startup", DRILL, language="es")
+        self.assertIn("visado startup ñ", drill)
+        self.assertEqual(len(drill), 27)
+
+    def test_no_native_query_is_asked_twice(self):
+        for code in ("fa", "ar", "ru", "de", "es"):
+            queries = expansions("seed term", SEED, language=code)
+            self.assertEqual(len(queries), len(set(queries)), code)
+
+    def test_the_crawl_asks_in_the_language_it_is_given(self):
+        client = StubClient({})
+        crawl("تک ویزا", client, levels=0, saturate=0, budget=5000,
+              language="fa")
+        self.assertIn("تک ویزا پ", client.asked)
+        self.assertNotIn("how تک ویزا", client.asked)
+
+    def test_the_probe_asks_in_the_language_it_is_given(self):
+        client = StubClient({})
+        probe_market("стартап", client, set(), queries=400, language="ru")
+        self.assertTrue(any(q.endswith(" ё") for q in client.asked))
 
 
 class ContainmentTests(unittest.TestCase):

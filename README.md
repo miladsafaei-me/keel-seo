@@ -784,6 +784,36 @@ walks the search into an unrelated industry. Rejected phrases are counted, not
 discarded — a term whose neighbours belong to another market is contamination
 worth seeing, and the report has a section for it.
 
+### Native grammars for non-English seeds
+
+The letter sweeps and the word affixes above are English. For a seed typed in
+another script they reach nothing: `تک ویزا ترکیه a` never opens the next Persian
+word, and `how تک ویزا ترکیه` is not a question anyone asks. Since v0.41.0 the
+grammar is picked by the run's interface language: the `--hl` override, else the
+primary market's language. One grammar serves the whole run, so every market's
+probe still asks the same queries.
+
+Five languages have a grammar of their own (`grammar.grammar_for`):
+
+| `hl` | Alphabet | Latin a-z after it |
+|---|---|---|
+| `fa` | the 32 Persian letters plus `آ` | yes |
+| `ar` | the 28 Arabic letters, with `ك` and `ي` | yes |
+| `ru` | `а`-`я` plus `ё` | yes |
+| `de` | a-z plus `ä ö ü ß` | no, already in it |
+| `es` | a-z plus `ñ` | no, already in it |
+
+Each also carries 30 to 38 native prefix and suffix words and a shorter branch
+list: generic query shapes such as how, what, price, cost, conditions, documents,
+reviews, free and online, typed the way people type them. The words are
+domain-neutral on purpose. The tight sweep uses only the native letters, because a
+Latin letter glued to a Persian or Cyrillic word means nothing. The star and
+leading-space families are unchanged. A Persian seed now gets 492 seed-tier
+queries instead of 382.
+
+English, an empty `hl` and any language without a grammar get the English grammar,
+and a test pins its query lists byte for byte to what v0.40.0 asked.
+
 ### Clustering
 
 Three steps, all deterministic and model-free.
@@ -1034,4 +1064,6 @@ own other spellings — `binary option | binary options` — so a spelling group
 part of the seed list rather than a hand-written CLI call outside the walk. v0.37.0 adds
 `keel_seo.noindex_paths`, an `X-Robots-Tag` on every response under the path prefixes a
 host never advertises, so a feed, a redirect or a third-party app's 404 says noindex
-without a `<head>` to say it in.
+without a `<head>` to say it in. v0.41.0 gives Persian, Arabic, Russian, German and
+Spanish seeds their own alphabet and query words, picked by the run's `hl`, and leaves
+English unchanged.

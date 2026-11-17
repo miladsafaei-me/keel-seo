@@ -13,6 +13,7 @@ from .crawl import (DEFAULT_MAX_VARIANTS, INCOMPLETE, PROBE_NOVELTY_FLOOR,
                     PROBE_NOVELTY_SHARE, PROBE_QUERIES, crawl, merge_markets,
                     probe_market, worth_crawling)
 from .markets import ENV_NAME as MARKET_ENV, SETTING_NAME as MARKET_SETTING
+from .grammar import grammar_for
 from .markets import TARGET_MARKETS, UnknownMarket
 from . import report
 from .report import metadata, write_all
@@ -331,6 +332,14 @@ def _run(args, progress, cache_path: str) -> int:
         asked = ", ".join(f"{code}/{target_markets.language_for(code, args.hl)}"
                           for code in markets)
         progress(f"markets ({len(markets)}): {asked}")
+    # One grammar for the whole run, so every market is asked the same query set
+    # and the probe comparison stays between markets: the --hl override, else the
+    # primary market's language. A Persian seed asked with English letters and
+    # words never opens the next Persian word.
+    lead = (args.primary.upper() if args.primary else markets[0]) if markets else ""
+    grammar_language = (target_markets.language_for(lead, args.hl)
+                        if lead else args.hl)
+    progress(f"query grammar: {grammar_for(grammar_language).language}")
     # One shared cache across the markets: its key already carries the market, so
     # the markets cannot read each other's answers, and a re-run of any of them
     # still replays for free.
@@ -379,6 +388,7 @@ def _run(args, progress, cache_path: str) -> int:
             variants=variants,
             max_variants=args.max_variants,
             progress=progress,
+            language=grammar_language,
         )
 
     started_at = time.time()
@@ -485,7 +495,8 @@ def _run(args, progress, cache_path: str) -> int:
             reference_sample, _ = probe_market(
                 args.seed, build_client(primary), (),
                 queries=args.probe, tight=not args.no_tight,
-                wildcards=args.wildcards, variants=spellings)
+                wildcards=args.wildcards, variants=spellings,
+                language=grammar_language)
             reference = set(reference_sample.phrases)
             progress(f"probe reference: {len(reference)} phrases from {primary} "
                      f"on the same {args.probe} queries")
@@ -498,7 +509,8 @@ def _run(args, progress, cache_path: str) -> int:
             sampled, verdict = probe_market(
                 args.seed, build_client(code), reference,
                 queries=args.probe, tight=not args.no_tight,
-                wildcards=args.wildcards, variants=spellings)
+                wildcards=args.wildcards, variants=spellings,
+                language=grammar_language)
             keep = worth_crawling(verdict, share=args.probe_share,
                                   floor=args.probe_floor)
             verdict["kept"] = keep

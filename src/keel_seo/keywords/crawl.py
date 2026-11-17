@@ -351,7 +351,8 @@ def merge_markets(seed: str, per_market: dict) -> Universe:
 def probe_market(seed: str, client: SuggestClient, reference,
                  *, queries: int = PROBE_QUERIES, tight: bool = True,
                  wildcards: bool = False,
-                 variants: tuple[str, ...] = ()) -> tuple[Universe, dict]:
+                 variants: tuple[str, ...] = (),
+                 language: str = "") -> tuple[Universe, dict]:
     """Ask a market a sample of the seed tier, and measure how much of it is new.
 
     The question a probe answers is the only one worth asking before spending a
@@ -377,11 +378,16 @@ def probe_market(seed: str, client: SuggestClient, reference,
     The phrases it collects are kept and returned. A probe is real data paid for
     in real requests, and throwing it away because the market did not earn a full
     crawl would be the second waste after the one this function exists to end.
+
+    `language` picks the grammar (``grammar.grammar_for``). Pass the run's one
+    grammar language to every market's probe, the reference included, so the
+    sample stays the same query set everywhere.
     """
     tokens = seed_tokens(seed)
     plan: list[str] = []
     for term in [normalize(seed)] + [normalize(v) for v in variants]:
-        plan.extend(expansions(term, SEED, tight=tight, wildcards=wildcards))
+        plan.extend(expansions(term, SEED, tight=tight, wildcards=wildcards,
+                               language=language))
     stride = max(1, len(plan) // max(1, queries))
     sample = plan[::stride][:queries]
 
@@ -440,6 +446,7 @@ def crawl(
     variants: tuple[str, ...] = (),
     max_variants: int = DEFAULT_MAX_VARIANTS,
     progress=None,
+    language: str = "",
 ) -> Universe:
     """Expand `seed` until it stops yielding, or a stated limit is reached.
 
@@ -450,6 +457,11 @@ def crawl(
     which had already found 8,513 phrases and left none of them on disk. Given
     its own deadline the crawl stops at the same moment, keeps everything, and
     says in the report that it ran out of time rather than out of universe.
+
+    `language` is the interface language the run asks in. It selects the native
+    alphabet and word affixes for the seed, branch and drill tiers
+    (``grammar.grammar_for``); empty means English, the grammar every run used
+    before native grammars existed.
     """
     started = time.time()
     tokens = seed_tokens(seed)
@@ -531,7 +543,8 @@ def crawl(
         queries = [
             query
             for term in frontier
-            for query in expansions(term, tier, tight=tight, wildcards=wildcards)
+            for query in expansions(term, tier, tight=tight, wildcards=wildcards,
+                                    language=language)
         ]
         expanded.update(frontier)
         announce(f"level {level}: {len(frontier)} term(s) -> {len(queries)} queries")
@@ -550,7 +563,8 @@ def crawl(
                 expanded.update(found)
                 responses = responses + run(
                     [q for term in found
-                     for q in expansions(term, SEED, tight=tight, wildcards=wildcards)],
+                     for q in expansions(term, SEED, tight=tight,
+                                         wildcards=wildcards, language=language)],
                     level)
 
         # Go deeper only underneath the queries Google truncated. A short answer
@@ -560,7 +574,8 @@ def crawl(
             if (not saturated or universe.queries_asked >= budget
                     or universe.blocked or out_of_time()):
                 break
-            drill = [q for r in saturated for q in expansions(r.query, DRILL)]
+            drill = [q for r in saturated
+                     for q in expansions(r.query, DRILL, language=language)]
             announce(
                 f"  drill {round_index + 1}: {len(saturated)} saturated -> {len(drill)} queries"
             )
