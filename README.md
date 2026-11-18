@@ -483,7 +483,9 @@ sixteen-month history by week with sudden breaks marked, opportunities (striking
 distance, low click rate against the property's own curve, competing pages, new and
 lost queries), click movers, the brand split with the hidden share, ranking by
 position, site sections (the folder after a locale folder), sitemaps and plain notes
-about the data.
+about the data. The comparison period's dashed lines stay off the daily chart until
+the viewer ticks "Show previous period on the chart"; the choice is kept in that
+browser. The tiles and tables still show the comparison.
 
 Rules every figure follows: totals come from the `date` dimension; a day on or after
 the API's `firstIncompleteDate` is never counted; the comparison period has exactly

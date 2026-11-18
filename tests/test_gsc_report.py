@@ -172,6 +172,9 @@ class ReportPageTests(TestCase):
         for part in ("gsc-performance", "gsc-breakdown", "gsc-history", "gsc-opportunities",
                      "gsc-brand", "gsc-ranking", "gsc-sections", "gsc-sitemaps", "gsc-notes", "gsc-report-data"):
             self.assertIn(part, html)
+        # The earlier period is an option on the chart, never drawn by default.
+        self.assertIn("data-compare-toggle", html)
+        self.assertNotIn("data-compare-toggle checked", html)
 
 
 class DeviceAndMonthTests(SimpleTestCase):

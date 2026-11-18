@@ -108,6 +108,9 @@ report.js from the JSON at the end; everything else renders here.
       </button>
       {% endfor %}
     </div>
+    {% if report.compare.available %}
+    <p class="gsc-chart-bar"><label class="gsc-compare-toggle"><input type="checkbox" class="gsc-compare-toggle__input" data-compare-toggle> Show {{ compare_label|lower }} on the chart</label></p>
+    {% endif %}
     <div class="gsc-chart" id="gsc-chart" data-chart="daily" role="img" aria-label="Daily {{ range_label|lower }}"></div>
     <ol class="gsc-annotations" id="gsc-annotations" hidden></ol>
   </section>
@@ -313,6 +316,9 @@ report.js from the JSON at the end; everything else renders here.
         </button>
         {% endfor %}
       </div>
+      {% if report.compare.available %}
+      <p class="gsc-chart-bar"><label class="gsc-compare-toggle"><input type="checkbox" class="gsc-compare-toggle__input" data-compare-toggle> Show {{ compare_label|lower }} on the chart</label></p>
+      {% endif %}
       <div class="gsc-chart" id="gsc-discover-chart" role="img" aria-label="Daily Discover traffic"></div>
     </section>
     <section id="gsc-discover-breakdown" class="gsc-card gsc-breakdown" aria-label="Discover breakdown">

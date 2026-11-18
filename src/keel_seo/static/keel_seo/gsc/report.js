@@ -20,6 +20,7 @@
   };
   var ORDER = ["clicks", "impressions", "ctr", "position"];
   var STORE = "gsc-report-metrics";
+  var COMPARE_STORE = "gsc-report-compare-lines";
 
   /* ---- small helpers ---- */
 
@@ -77,6 +78,13 @@
       if (Array.isArray(saved) && saved.length) return saved.filter(function (m) { return METRICS[m]; });
     } catch (e) { /* storage blocked: use the default */ }
     return ["clicks", "impressions"];
+  }
+  // The earlier period's dashed lines are off until the viewer turns them on, as in Search Console.
+  function readCompareLines() {
+    try { return window.localStorage.getItem(COMPARE_STORE) === "1"; } catch (e) { return false; }
+  }
+  function saveCompareLines(on) {
+    try { window.localStorage.setItem(COMPARE_STORE, on ? "1" : "0"); } catch (e) { /* not kept */ }
   }
   function saveMetrics(list) {
     try { window.localStorage.setItem(STORE, JSON.stringify(list)); } catch (e) { /* not kept */ }
@@ -564,18 +572,29 @@
   syncTiles();
   var chartHost = document.getElementById("gsc-chart");
   var hasPrev = data.series.length && data.series[0].prev;
+  var showPrev = readCompareLines();
+  var redrawOnCompare = [];
+  root.querySelectorAll("[data-compare-toggle]").forEach(function (box) {
+    box.checked = showPrev;
+    box.addEventListener("change", function () {
+      showPrev = box.checked;
+      saveCompareLines(showPrev);
+      root.querySelectorAll("[data-compare-toggle]").forEach(function (b) { b.checked = showPrev; });
+      redrawOnCompare.forEach(function (draw) { draw(); });
+    });
+  });
   var rangeEvents = allEvents.filter(function (e) { return e.date >= data.range.start && e.date <= data.range.end; });
   function drawPerformance() {
     var labels = data.series.map(function (d) { return d.date; });
     drawChart({
       host: chartHost,
       labels: labels,
-      prevLabels: hasPrev ? data.series.map(function (d) { return d.prev.date; }) : null,
+      prevLabels: hasPrev && showPrev ? data.series.map(function (d) { return d.prev.date; }) : null,
       series: ORDER.filter(function (m) { return selected.indexOf(m) >= 0; }).map(function (m) {
         return {
           metric: m,
           values: data.series.map(function (d) { return d.impressions || m !== "position" ? d[m] : null; }),
-          prev: hasPrev ? data.series.map(function (d) { return d.prev.impressions || m !== "position" ? d.prev[m] : null; }) : null
+          prev: hasPrev && showPrev ? data.series.map(function (d) { return d.prev.impressions || m !== "position" ? d.prev[m] : null; }) : null
         };
       }),
       marks: rangeEvents.map(function (e) { return { index: labels.indexOf(e.date), num: e.num, kind: e.kind }; })
@@ -583,6 +602,7 @@
   }
   if (chartHost) {
     watch(chartHost, drawPerformance);
+    redrawOnCompare.push(drawPerformance);
     listEvents(document.getElementById("gsc-annotations"), rangeEvents);
   }
   tiles.forEach(function (t) {
@@ -815,10 +835,10 @@
       drawChart({
         host: discHost,
         labels: disc.series.map(function (d) { return d.date; }),
-        prevLabels: discPrev ? disc.series.map(function (d) { return d.prev.date; }) : null,
+        prevLabels: discPrev && showPrev ? disc.series.map(function (d) { return d.prev.date; }) : null,
         series: ["clicks", "impressions", "ctr"].filter(function (m) { return discSelected.indexOf(m) >= 0; }).map(function (m) {
           return { metric: m, values: disc.series.map(function (d) { return d[m]; }),
-            prev: discPrev ? disc.series.map(function (d) { return d.prev[m]; }) : null };
+            prev: discPrev && showPrev ? disc.series.map(function (d) { return d.prev[m]; }) : null };
         }),
         marks: []
       });
@@ -833,6 +853,11 @@
       });
     });
     watch(discHost, drawDiscover);
+    redrawOnCompare.push(drawDiscover);
+    if (!discPrev) {
+      var discBar = document.querySelector("#gsc-discover .gsc-chart-bar");
+      if (discBar) discBar.hidden = true;
+    }
     var DNAMES = { page: "Top pages", country: "Country", date: "Date" };
     var drawDiscoverTable = function (dim) {
       var t = disc.tables[dim];
