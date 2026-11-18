@@ -77,6 +77,16 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
   e.g. SignalBots' `tools/gsc/*`), and any query→cluster→ideation logic (reached from
   the dashboard only through the explicit `KEEL_SEO["gsc_queue_hook"]` seam).
 
+## The site audit engine (`keel_seo.audit`, since v0.44.0)
+
+The script half of the keel-kit `/seo-strategy` skill: a pooled crawl plus Search Console into
+one row per URL and one fact file per audit area, then validation and reconciliation of the
+findings the skill's agents write. It audits from the outside, calls no model and needs no
+Django settings. Its commands, workspace layout and limits are in `src/keel_seo/audit/README.md`;
+the finding schema lives with the skill, in keel-kit
+`skills/seo-strategy/references/specialist-contract.md`. A change to a fact file's keys is a
+change to what an agent file in keel-kit `agents/seo-*.md` names: change both together.
+
 ## Known issue: the YouTube client exists twice
 
 `keel_seo/youtube/` (`api.py`, `channels.py`, `feed.py`, `store.py`, `analysis.py`) holds a

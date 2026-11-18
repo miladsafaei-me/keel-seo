@@ -1033,6 +1033,19 @@ wanted. `sync` is a pull because the harvest host cannot reach a laptop behind
 NAT, and it copies only the four output formats — never the response cache, which
 is large and only useful where the crawl runs.
 
+## Site audit engine (`keel_seo.audit`, optional)
+
+Since v0.44.0. The deterministic half of the keel-kit `/seo-strategy` skill: it crawls a site
+through the proxy pool, joins 16 months of Search Console data, builds one row per URL
+(`inventory`) and writes a fact file per audit area (technical, internal linking, content
+inventory, cannibalization, scaled content, intent, structure, snippets and schema, performance,
+competitors). Specialist agents judge the candidates; the engine validates and reconciles what
+they return into one action per URL. It needs no access to the audited site's code, so it serves
+agency clients as well as Keel consumers. No model is called anywhere in it.
+
+Install `keel-seo[gsc,proxies,audit]`. Commands, the workspace layout and the limits are in
+[`src/keel_seo/audit/README.md`](src/keel_seo/audit/README.md).
+
 ## Status
 
 v0.7.1. Consumed by SignalBots (its first host) since v0.1.4: the Landing table is
