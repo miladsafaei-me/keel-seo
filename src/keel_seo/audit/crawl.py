@@ -24,6 +24,7 @@ ASSET = re.compile(
     r"woff2?|ttf|eot|csv|xlsx?|docx?|pptx?|rss|atom)$", re.IGNORECASE)
 LOC = re.compile(r"<loc>\s*(?:<!\[CDATA\[)?\s*([^<\]\s]+)\s*(?:\]\]>)?\s*</loc>", re.IGNORECASE)
 LASTMOD = re.compile(r"<lastmod>\s*([^<\s]+)\s*</lastmod>", re.IGNORECASE)
+SITEMAP_END = re.compile(r"</(?:urlset|sitemapindex)>\s*$", re.IGNORECASE)
 URL_BLOCK = re.compile(r"<(url|sitemap)>(.*?)</\1>", re.IGNORECASE | re.DOTALL)
 CHALLENGE = ("just a moment", "attention required", "verify you are human", "cf-chl-")
 
@@ -53,7 +54,8 @@ def _sitemaps(pool, origin: str, robots: str) -> tuple[dict, list]:
         if sitemap.lower().endswith(".gz"):
             problems.append(f"{sitemap}: gzip sitemap files are not read")
             continue
-        response = egress.fetch(pool, sitemap, blocked=_blocked)
+        response = egress.fetch(pool, sitemap, blocked=_blocked, timeout=40,
+                                whole=lambda body: bool(SITEMAP_END.search(body[-400:])))
         if response.status != 200:
             problems.append(f"{sitemap}: status {response.status or response.error}")
             continue
@@ -115,8 +117,8 @@ def _save(conn, url: str, row: dict, links: list) -> None:
 
 def run(workspace: Workspace, *, refresh: bool = False, limit: int = 0) -> dict:
     project = workspace.project
-    settings = {"max_pages": 20000, "workers": 24, "follow_links": True,
-                "include_query_urls": False, **project.get("crawl", {})}
+    settings = {"max_pages": 20000, "workers": 24, "follow_links": True, "include_query_urls": False,
+                "min_gsc_impressions": 10, "max_gsc_urls": 3000, **project.get("crawl", {})}
     origin = project["site"].rstrip("/")
     host = urlsplit(origin).netloc.lower()
     conn = workspace.db()
@@ -127,7 +129,8 @@ def run(workspace: Workspace, *, refresh: bool = False, limit: int = 0) -> dict:
         accept=lambda status, body: status == 200 and bool(body.strip()) and "<html" not in body[:300].lower(),
     )
     try:
-        robots = egress.fetch(pool, f"{origin}/robots.txt", blocked=_blocked)
+        robots = egress.fetch(pool, f"{origin}/robots.txt", blocked=_blocked,
+                              whole=lambda body: "<html" not in body[:300].lower())
         set_meta(conn, "robots_txt", robots.body if robots.status == 200 else "")
         set_meta(conn, "robots_status", robots.status)
         sitemap_urls, problems = _sitemaps(pool, origin, robots.body if robots.status == 200 else "")
@@ -143,12 +146,13 @@ def run(workspace: Workspace, *, refresh: bool = False, limit: int = 0) -> dict:
             conn.execute("INSERT OR IGNORE INTO pages(url, source) VALUES (?, ?)", (url, source))
         gsc_only = 0
         for row in conn.execute(
-                "SELECT url FROM gsc_page WHERE span='16m' ORDER BY impressions DESC LIMIT ?",
-                (settings.get("max_gsc_urls", 5000),)).fetchall():
+                "SELECT url FROM gsc_page WHERE span='16m' AND impressions >= ? ORDER BY impressions DESC LIMIT ?",
+                (settings["min_gsc_impressions"], settings["max_gsc_urls"])).fetchall():
             if same_site(row["url"], host) and not ASSET.search(urlsplit(row["url"]).path):
                 gsc_only += conn.execute(
                     "INSERT OR IGNORE INTO pages(url, source) VALUES (?, 'gsc')", (row["url"],)).rowcount
-        _log(f"Search Console adds {gsc_only} URLs that no sitemap declares")
+        _log(f"Search Console adds {gsc_only} URLs with {settings['min_gsc_impressions']} or more impressions "
+             "that no sitemap declares")
         if refresh:
             conn.execute("UPDATE pages SET fetched_at=''")
         conn.commit()

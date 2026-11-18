@@ -66,7 +66,10 @@ def _parse(raw: bytes) -> tuple[int, dict, str]:
                 continue
             key = name.strip().lower()
             value = value.strip()
-            headers[key] = f"{headers[key]}, {value}" if key in headers else value
+            if key in headers and key != "location":
+                headers[key] = f"{headers[key]}, {value}"
+            else:
+                headers.setdefault(key, value)
         return status, headers, rest.decode("utf-8", errors="replace")
 
 
@@ -103,11 +106,14 @@ def build_pool(probe_url: str, accept, *, candidates: int = 900):
                            progress=lambda *args, **kwargs: None)
 
 
-def fetch(pool, url: str, *, timeout: float = 20.0, blocked=None) -> Response:
+def fetch(pool, url: str, *, timeout: float = 20.0, blocked=None, whole=None) -> Response:
     """Fetch ``url`` and follow its redirects by hand, retrying each hop.
 
     ``blocked(status, headers, body)`` says whether an answer is the site
     refusing the proxy (a challenge page) rather than answering the request.
+    ``whole(body)`` is an extra completeness test for a 200 answer whose end
+    cannot be recognised from its content type, such as a sitemap: a proxy
+    that drops the connection early otherwise hands back a shorter file.
     """
     response = Response(url=url)
     current = url
@@ -127,7 +133,7 @@ def fetch(pool, url: str, *, timeout: float = 20.0, blocked=None) -> Response:
                 pool.report_blocked(proxy)
                 status = 0
                 continue
-            if _complete(status, headers, body):
+            if _complete(status, headers, body) and (status != 200 or whole is None or whole(body)):
                 pool.report_ok(proxy)
                 break
             pool.report_failure(proxy)

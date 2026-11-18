@@ -87,8 +87,8 @@ STARTER_PROJECT = {
     "business": {"goal": "", "money_pages": [], "ymyl": False},
     "brand_terms": [],
     "competitors": [],
-    "crawl": {"max_pages": 20000, "workers": 24, "follow_links": True,
-              "include_query_urls": False},
+    "crawl": {"max_pages": 20000, "workers": 24, "follow_links": True, "include_query_urls": False,
+              "min_gsc_impressions": 10, "max_gsc_urls": 3000},
     "families": [],
     "notes": "",
 }

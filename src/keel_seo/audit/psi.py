@@ -1,20 +1,28 @@
 """PageSpeed numbers for one sample page per family.
 
 Calls Google's public PageSpeed Insights API, which fetches the page from
-Google's side, so nothing here crawls. One page per family, the one with the
+Google's side, so nothing here crawls. The API needs a free key for any real
+volume (``PAGESPEED_API_KEY``); without one it stops at the first refusal. One page per family, the one with the
 most impressions, is enough to judge a template; the field data block also
 carries the whole origin's Core Web Vitals where Chrome has enough visits.
 """
 from __future__ import annotations
 
 import json
+import os
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
 from .store import Workspace
 
 API = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+KEY_ENV = "PAGESPEED_API_KEY"
+NO_QUOTA = (
+    "PageSpeed refused the request for lack of quota. Without a key the API allows very few calls. "
+    f"Create a free API key for the PageSpeed Insights API and export it as {KEY_ENV}, then run psi again."
+)
 FIELD = {"LARGEST_CONTENTFUL_PAINT_MS": "lcp_ms", "INTERACTION_TO_NEXT_PAINT": "inp_ms",
          "CUMULATIVE_LAYOUT_SHIFT_SCORE": "cls_x100", "EXPERIMENTAL_TIME_TO_FIRST_BYTE": "ttfb_ms",
          "FIRST_CONTENTFUL_PAINT_MS": "fcp_ms"}
@@ -29,7 +37,10 @@ def _field(block: dict) -> dict:
 
 
 def _measure(url: str) -> dict:
-    query = urllib.parse.urlencode({"url": url, "strategy": "mobile", "category": "performance"})
+    params = {"url": url, "strategy": "mobile", "category": "performance"}
+    if os.environ.get(KEY_ENV):
+        params["key"] = os.environ[KEY_ENV]
+    query = urllib.parse.urlencode(params)
     with urllib.request.urlopen(f"{API}?{query}", timeout=120) as response:
         data = json.load(response)
     lighthouse = data.get("lighthouseResult", {})
@@ -57,6 +68,12 @@ def run(workspace: Workspace, *, max_pages: int = 12) -> dict:
     for row in rows:
         try:
             payload = _measure(row["url"])
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                conn.close()
+                return {"measured": done, "failed": failed, "stopped": NO_QUOTA}
+            failed.append({"url": row["url"], "error": str(exc)[:160]})
+            continue
         except Exception as exc:  # noqa: BLE001 - one page failing must not stop the rest
             failed.append({"url": row["url"], "error": str(exc)[:160]})
             time.sleep(5)
