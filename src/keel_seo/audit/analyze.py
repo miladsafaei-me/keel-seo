@@ -1020,10 +1020,12 @@ class Audit:
         for record in serp.values():
             ours = next((result.get("rank", index + 1) for index, result in enumerate(record.get("results", []))
                          if host in result.get("url", "")), None)
+            seen = set()
             for index, result in enumerate(record.get("results", [])[:10]):
                 domain = urlsplit(result.get("url", "")).netloc.lower().removeprefix("www.")
-                if not domain or domain == host:
+                if not domain or domain == host or domain in seen:
                     continue
+                seen.add(domain)
                 domains[domain] += 1
                 if ours is None or result.get("rank", index + 1) < ours:
                     ahead[domain] += 1
