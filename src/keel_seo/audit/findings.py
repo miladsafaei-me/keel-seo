@@ -3,7 +3,10 @@
 Agents write ``findings/<module>.json``. ``validate`` checks one file against
 the schema and resolves each finding's targets to real URLs. ``reconcile``
 drops what the verifier refuted, applies the strategist's decisions, leaves one
-action per URL and lists every conflict and every risky removal. ``export``
+action per URL and lists every conflict and every risky removal. Decisions
+live in ``findings/decisions.json``: ``{"findings": {"<id>": {"action": "drop"
+or a new action, "reason": ...}}, "urls": {"<url>": {"action": ...,
+"merge_into": ..., "reason": ...}}}``. ``export``
 writes the action workbook for the team that will do the work.
 """
 from __future__ import annotations
@@ -117,6 +120,8 @@ def _load(workspace: Workspace) -> tuple[list, dict, dict]:
     decided = workspace.findings / "decisions.json"
     if decided.exists():
         decisions = json.loads(decided.read_text(encoding="utf-8"))
+    if not ({"findings", "urls"} & set(decisions)):
+        decisions = {"urls": decisions, "findings": {}}
     return findings, checks, decisions
 
 
@@ -124,7 +129,9 @@ def reconcile(workspace: Workspace) -> dict:
     findings, checks, decisions = _load(workspace)
     conn = _readonly(workspace)
     inventory = {row["url"]: dict(row) for row in conn.execute(
-        "SELECT url, family, status, indexable, clicks_3m, impr_3m, clicks_16m, inlinks_content FROM inventory")}
+        "SELECT url, family, status, hops, indexable, clicks_3m, impr_3m, clicks_16m, inlinks_content FROM inventory")}
+    ruled = decisions.get("findings", {})
+    url_decisions = decisions.get("urls", {})
     per_url: dict = defaultdict(list)
     merge_targets: dict = defaultdict(list)
     kept, dropped = [], []
@@ -133,12 +140,25 @@ def reconcile(workspace: Workspace) -> dict:
         if check.get("verdict") == "refuted":
             dropped.append({"id": finding["id"], "reason": check.get("reason", "")})
             continue
+        ruling = ruled.get(finding["id"])
+        if ruling and ruling.get("action") == "drop":
+            dropped.append({"id": finding["id"], "reason": "strategist: " + ruling.get("reason", "")})
+            continue
+        if ruling:
+            finding["original_action"] = finding["action"]
+            finding["action"] = ruling["action"]
+            finding["strategist_note"] = ruling.get("reason", "")
+            if ruling["action"] not in (*REMOVING, "create"):
+                finding["url_change"] = False
         if check.get("verdict") == "weakened":
             finding["confidence"] = "low"
         finding["verification"] = check.get("verdict", "not checked")
         urls, _problem = _resolve(conn, finding.get("targets", {}))
         skip = set(check.get("exclude_urls", []))
         urls = [url for url in urls if url not in skip]
+        if finding["action"] in KEEPING and "urls" not in finding.get("targets", {}):
+            urls = [url for url in urls if url == SITE_URL
+                    or (inventory.get(url, {}).get("status") == 200 and not inventory[url]["hops"])]
         finding["pages"] = len(urls)
         kept.append(finding)
         for url in urls:
@@ -154,7 +174,7 @@ def reconcile(workspace: Workspace) -> dict:
         removing = [item for item in items if item["action"] in REMOVING]
         keeping = [item for item in items if item["action"] in KEEPING]
         row = inventory.get(url, {})
-        decision = decisions.get(url)
+        decision = url_decisions.get(url)
         flags = []
         if decision:
             action, merge_into = decision["action"], decision.get("merge_into", "")
@@ -197,8 +217,14 @@ def reconcile(workspace: Workspace) -> dict:
                       "findings": [item["id"] for item in items], "flags": flags,
                       "clicks_3m": row.get("clicks_3m", 0), "impr_3m": row.get("impr_3m", 0)}
 
+    groups: dict = defaultdict(list)
+    for conflict in conflicts:
+        groups[tuple(sorted(f"{item['id']}:{item['action']}" for item in conflict["findings"]))].append(conflict["url"])
+    conflict_groups = [{"findings": list(key), "pages": len(urls), "examples": urls[:3]}
+                       for key, urls in sorted(groups.items(), key=lambda item: -len(item[1]))]
     summary = {
         "findings_kept": len(kept), "findings_refuted": dropped,
+        "conflict_groups": conflict_groups,
         "findings_by_module": {module: sum(1 for item in kept if item["module"] == module) for module in MODULES},
         "findings_by_severity": {level: sum(1 for item in kept if item["severity"] == level) for level in SEVERITIES},
         "url_actions": {action: sum(1 for item in final.values() if item["action"] == action) for action in ACTIONS},
@@ -210,7 +236,8 @@ def reconcile(workspace: Workspace) -> dict:
     (workspace.findings / "reconciled.json").write_text(json.dumps(
         {"summary": summary, "findings": kept, "urls": list(final.values())}, ensure_ascii=False, indent=1),
         encoding="utf-8")
-    summary["conflicts"] = {"count": len(conflicts), "first": conflicts[:15]}
+    summary["conflicts"] = {"count": len(conflicts), "first": conflicts[:5]}
+    summary["conflict_groups"] = conflict_groups[:20]
     summary["risky_removals"] = {"count": len(risky), "first": risky[:15]}
     return summary
 
