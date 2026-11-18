@@ -733,6 +733,7 @@
 </section>
 
 {% comment %} ---- Clicks by market ---- {% endcomment %}
+{% if sc_by_market %}
 <section class="mb-8">
   <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] lg:p-6">
     <h4 class="flex items-center gap-2 text-base font-semibold text-gray-800 dark:text-white/90">{% icon "globe" class="h-4 w-4 text-gsc-p3" %}Clicks by market</h4>
@@ -752,6 +753,7 @@
     </div>
   </div>
 </section>
+{% endif %}
 
 {% comment %} ---- Brand share — one comparison bar table (replaces 3 pies) ---- {% endcomment %}
 {% if sc_brand_bars %}

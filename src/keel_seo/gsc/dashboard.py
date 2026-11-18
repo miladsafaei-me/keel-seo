@@ -662,11 +662,19 @@ def _resolve_payload(window=None, start=None, end=None, prop=None):
             from . import live as gsc_live
 
             creds = prop.get("credentials") if prop else None
+            if prop:
+                # A declared property is another site: it gets only the brands and
+                # form words it names itself, never the host's market.
+                brands = prop.get("brands")
+                qualifiers = prop.get("cluster_qualifiers", gsc_build.CLUSTER_QUALIFIERS_GENERIC)
+            else:
+                brands = config.seo_setting("gsc_brands")
+                qualifiers = config.seo_setting("gsc_cluster_qualifiers")
             if gsc_live.live_enabled(site, creds):
                 data = gsc_live.build_range(
                     live_start, live_end, window=live_key, site=site,
                     directory_series=prop.get("directory_series", True) if prop else True,
-                    credentials=creds,
+                    credentials=creds, brands=brands, cluster_qualifiers=qualifiers,
                 )
                 win_key = live_key
         except Exception:
@@ -759,6 +767,10 @@ def build_context(window: "str | None" = None, start: "str | None" = None,
 
     # per-market bars sized against the busiest market's clicks
     by_market = data.get("by_market", [])
+    # Markets come from the host's query enrichment map; with none, every query is
+    # "cross-market" and the panel would be one meaningless bar, so it is left out.
+    if all(m.get("market") in ("cross-market", "", None) for m in by_market):
+        by_market = []
     peak_clicks = max((m.get("clicks", 0) for m in by_market), default=0)
     for m in by_market:
         m["width_12"] = _twelfths(m.get("clicks", 0), peak_clicks)

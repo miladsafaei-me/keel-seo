@@ -72,31 +72,50 @@ def _position_bands(rows: list) -> list:
     return out
 
 
-_BRAND_RULES = [
-    ("Chinese Bot", re.compile(r"chin(e|)se|chinesebot|chinese\s?boat", re.I)),
-    ("Quotex", re.compile(r"quotex|qxbroker|\bqx\b", re.I)),
-    ("Pocket Option", re.compile(r"pocket\s?option|pocketoption|\bpo\s?trade\b", re.I)),
-    ("Olymp Trade", re.compile(r"olymp", re.I)),
-    ("IQ Option", re.compile(r"iq\s?option|iqoption", re.I)),
-    ("Binomo", re.compile(r"binomo", re.I)),
-    ("Deriv", re.compile(r"\bderiv\b", re.I)),
-    ("Exnova", re.compile(r"exnova", re.I)),
-]
+# Brand share needs a per-site list of brands: which names a site's searchers type is
+# a fact about that site's market, never about the package. A list is [(label, regex)];
+# a preset name stands for a known market's list. "binary_options" is the brand list of
+# the SignalBots family, kept as the host default so those sites render as before.
+BRAND_PRESETS = {
+    "binary_options": [
+        ("Chinese Bot", r"chin(e|)se|chinesebot|chinese\s?boat"),
+        ("Quotex", r"quotex|qxbroker|\bqx\b"),
+        ("Pocket Option", r"pocket\s?option|pocketoption|\bpo\s?trade\b"),
+        ("Olymp Trade", r"olymp"),
+        ("IQ Option", r"iq\s?option|iqoption"),
+        ("Binomo", r"binomo"),
+        ("Deriv", r"\bderiv\b"),
+        ("Exnova", r"exnova"),
+    ],
+}
+HOST_DEFAULT_BRANDS = "binary_options"
 
 
-def _brand(query: str) -> str:
-    for name, rx in _BRAND_RULES:
+def brand_rules(spec) -> list:
+    """Compile a brand spec: a preset name, a list of (label, regex), or None/[] for none."""
+    if not spec:
+        return []
+    if isinstance(spec, str):
+        spec = BRAND_PRESETS.get(spec, [])
+    return [(label, re.compile(rx, re.I)) for label, rx in spec]
+
+
+def _brand(query: str, rules: list) -> str:
+    for name, rx in rules:
         if rx.search(query):
             return name
     return "Other"
 
 
-def _brand_share(rows_by_query: dict) -> dict:
+def _brand_share(rows_by_query: dict, rules: list) -> dict:
     """Per-metric brand pie data: top brands + 'Other', with pct, for each of
-    queries / impressions / clicks."""
+    queries / impressions / clicks. No rules, or no query naming a brand, gives {}
+    so the dashboard leaves the panel out instead of showing one "Other" bar."""
+    if not rules:
+        return {}
     agg = {}
     for query, v in rows_by_query.items():
-        b = agg.setdefault(_brand(query), {"queries": 0, "impressions": 0, "clicks": 0})
+        b = agg.setdefault(_brand(query, rules), {"queries": 0, "impressions": 0, "clicks": 0})
         b["queries"] += 1
         b["impressions"] += v["impressions"]
         b["clicks"] += v["clicks"]
@@ -114,6 +133,8 @@ def _brand_share(rows_by_query: dict) -> dict:
             rows.append({"brand": "Other", "value": other, "pct": round(other / total * 100, 1)})
         return rows
 
+    if not any(name != "Other" for name in agg):
+        return {}
     return {"queries": _slices("queries"), "impressions": _slices("impressions"), "clicks": _slices("clicks")}
 
 
@@ -121,15 +142,27 @@ _CLUSTER_STOP = {
     "the", "a", "an", "for", "to", "of", "in", "on", "at", "and", "or", "with",
     "how", "is", "are", "do", "does", "can", "what", "which", "vs", "my", "your",
     "me", "you", "it", "this", "that", "best", "top", "no",
+    # Persian function words, so a Persian query clusters on its subject.
+    "و", "در", "به", "از", "که", "با", "برای", "را", "این", "آن", "یک", "تا",
+    "است", "چیست", "چیه", "چی", "چه", "چگونه", "چطور", "بهترین", "های", "ها",
 }
 
-_CLUSTER_QUALIFIERS = {
-    "signal", "signals", "bot", "bots", "robot", "robots", "trading", "trade",
-    "trader", "free", "download", "apk", "app", "ai", "pro", "max", "generator",
-    "online", "live", "real", "new", "software", "tool", "tools", "account",
-    "strategy", "tutorial", "guide", "review", "legit", "legitimate", "scam",
-    "hack", "vip", "premium", "paid", "channel", "group", "link", "com", "auto",
+# Words that describe a query's form, never its subject; a cluster is keyed on the
+# subject first. The generic set fits any site; the SignalBots family adds its own
+# product words, kept as the host default so those sites cluster as before.
+CLUSTER_QUALIFIERS_GENERIC = {
+    "free", "download", "app", "ai", "pro", "online", "live", "real", "new",
+    "software", "tool", "tools", "account", "tutorial", "guide", "review", "legit",
+    "legitimate", "scam", "premium", "paid", "link", "com",
+    "دانلود", "رایگان", "آنلاین", "آموزش", "سایت", "اپلیکیشن", "برنامه",
 }
+CLUSTER_QUALIFIERS_BINARY = {
+    "signal", "signals", "bot", "bots", "robot", "robots", "trading", "trade",
+    "trader", "apk", "max", "generator", "strategy", "hack", "vip", "channel",
+    "group", "auto",
+}
+HOST_DEFAULT_QUALIFIERS = CLUSTER_QUALIFIERS_GENERIC | CLUSTER_QUALIFIERS_BINARY
+_CLUSTER_QUALIFIERS = HOST_DEFAULT_QUALIFIERS  # the old name, for offline exporters
 
 
 def _stem(t: str) -> str:
@@ -139,16 +172,20 @@ def _stem(t: str) -> str:
 
 def _kw_tokens(kw: str) -> list:
     out = []
-    for t in re.findall(r"[a-z0-9]+", kw.lower()):
+    # Letters and digits of any script, so a Persian query has tokens too.
+    for t in re.findall(r"[^\W_]+", kw.lower()):
         s = _stem(t)
         if len(s) > 1 and s not in _CLUSTER_STOP:
             out.append(s)
     return out
 
 
-def cluster_keywords(keywords: list) -> dict:
-    """Lexical (no-LLM) keyword clustering keyed on the distinctive entity token."""
+def cluster_keywords(keywords: list, qualifiers: "set | None" = None) -> dict:
+    """Lexical (no-LLM) keyword clustering keyed on the distinctive entity token.
+    ``qualifiers`` defaults to the host set (generic plus the SignalBots words)."""
     from collections import Counter
+
+    qualifiers = HOST_DEFAULT_QUALIFIERS if qualifiers is None else set(qualifiers)
 
     freq: Counter = Counter()
     for kw in keywords:
@@ -159,8 +196,8 @@ def cluster_keywords(keywords: list) -> dict:
         if not toks:
             return "other"
         by_freq = sorted(set(toks), key=lambda t: (-freq[t], t))
-        entities = [t for t in by_freq if t not in _CLUSTER_QUALIFIERS]
-        anchors = (entities + [t for t in by_freq if t in _CLUSTER_QUALIFIERS])[:2]
+        entities = [t for t in by_freq if t not in qualifiers]
+        anchors = (entities + [t for t in by_freq if t in qualifiers])[:2]
         return " ".join(sorted(anchors)) if anchors else "other"
 
     return {kw: label(kw) for kw in keywords}
@@ -382,7 +419,8 @@ def ctr_curve(q_values: list, min_impr: int = 30, top: int = 20) -> dict:
 
 
 def build(reg: dict, pages: list, query_page: list, bands_over_time: "dict | None" = None,
-          prev_query_keys: "set | None" = None) -> dict:
+          prev_query_keys: "set | None" = None, brands=HOST_DEFAULT_BRANDS,
+          cluster_qualifiers: "set | None" = None) -> dict:
     """The full dashboard payload. ``bands_over_time`` (the trend panel) is supplied by
     the caller; when omitted the trend renders empty rather than reading any files.
 
@@ -391,6 +429,10 @@ def build(reg: dict, pages: list, query_page: list, bands_over_time: "dict | Non
     period-over-period definition that never inflates as the enrichment map ages. When
     omitted (the offline / full-registry path), "new" falls back to the registry's
     ``first_seen == latest`` marker.
+
+    ``brands`` is a brand spec for :func:`brand_rules` (a preset name, a list of
+    (label, regex), or None for no brand panel). ``cluster_qualifiers`` is the set of
+    form words :func:`cluster_keywords` keys clusters around; None is the host set.
     """
     q = reg["queries"]
     latest = reg.get("updated", "")
@@ -400,7 +442,7 @@ def build(reg: dict, pages: list, query_page: list, bands_over_time: "dict | Non
 
     position_bands = _position_bands(rows)
     bands_over_time = bands_over_time if bands_over_time is not None else {"windows": [], "bands": []}
-    brand_share = _brand_share(q)
+    brand_share = _brand_share(q, brand_rules(brands))
     directory_share = _directory_share(query_page)
 
     hilc = [
@@ -465,17 +507,17 @@ def build(reg: dict, pages: list, query_page: list, bands_over_time: "dict | Non
             })
     dedicated.sort(key=lambda r: r["impressions"], reverse=True)
 
-    cl_hilc = cluster_keywords([r["query"] for r in hilc])
+    cl_hilc = cluster_keywords([r["query"] for r in hilc], cluster_qualifiers)
     for r in hilc:
         r["cluster"] = cl_hilc.get(r["query"], "other")
     hilc_by_cluster = _aggregate_by_cluster(hilc, cl_hilc, ["impressions", "clicks"])
 
-    cl_new = cluster_keywords([r["query"] for r in new_queries])
+    cl_new = cluster_keywords([r["query"] for r in new_queries], cluster_qualifiers)
     for r in new_queries:
         r["cluster"] = cl_new.get(r["query"], "other")
     new_by_cluster = _aggregate_by_cluster(new_queries, cl_new, ["impressions", "clicks"])
 
-    cl_ded = cluster_keywords([r["query"] for r in dedicated])
+    cl_ded = cluster_keywords([r["query"] for r in dedicated], cluster_qualifiers)
     for r in dedicated:
         r["cluster"] = cl_ded.get(r["query"], "other")
     dedicated_by_cluster = _aggregate_by_cluster(dedicated, cl_ded, ["impressions", "clicks"])

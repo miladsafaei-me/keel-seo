@@ -42,7 +42,9 @@ CACHE_TTL = 12 * 3600             # 12h — matches the 1-2x/day whole-data refr
 # v11 = period-over-period "new queries" (prev-period set, not enrichment marker),
 #       impression-weighted ranking-trend bands, TOP_N-capped row tables, dropped
 #       unused pareto/top_queries.
-CACHE_VER = "v11"
+# v12 = brand share and keyword clusters from the property's own brand list and form
+#       words (a declared property no longer gets the SignalBots brand list).
+CACHE_VER = "v12"
 _ENRICH_FIELDS = ("market", "cluster_id", "cluster_topic", "content_type", "role")
 
 _enrich_cache: "dict | None" = None
@@ -305,14 +307,16 @@ def _dir_daily_series(service, site: str, start: str, end: str, p_rows: list, ax
 
 
 def build_range(start: str, end: str, window: str = "custom", site: "str | None" = None,
-                directory_series: bool = True, credentials: "str | None" = None) -> dict:
+                directory_series: bool = True, credentials: "str | None" = None,
+                brands=gsc_build.HOST_DEFAULT_BRANDS, cluster_qualifiers: "set | None" = None) -> dict:
     """A full dashboard payload for [start, end], computed live and cached per range.
 
     ``site`` defaults to ``$GSC_SITE``. Any other property skips the host's query
     enrichment map, which only describes the host's own queries, and
     ``directory_series=False`` skips the date x page pull behind the Performance
     chart's directory filter, the slowest pull on a large property. ``credentials`` is
-    the key path of a property read through another service account."""
+    the key path of a property read through another service account. ``brands`` and
+    ``cluster_qualifiers`` go to :func:`keel_seo.gsc.build.build` unchanged."""
     site = site or os.environ["GSC_SITE"]
     ckey = f"gscdash:{CACHE_VER}:{site}:{start}:{end}" + ("" if directory_series else ":nodirs")
     hit = cache.get(ckey)
@@ -353,7 +357,8 @@ def build_range(start: str, end: str, window: str = "custom", site: "str | None"
     prev_keys = {r["keys"][0] for r in comp["prev_query_rows"] if r.get("keys")}
     payload = gsc_build.build(reg, p_rows, qp_rows,
                               bands_over_time=_bands_live(service, site, end),
-                              prev_query_keys=prev_keys)
+                              prev_query_keys=prev_keys, brands=brands,
+                              cluster_qualifiers=cluster_qualifiers)
     payload.update({k: comp[k] for k in ("kpi_deltas", "movers", "time_series")})
     # Correct the headline clicks/impressions to the TRUE totals (query-dim sums undercount).
     tt = comp["true_totals"]

@@ -102,8 +102,19 @@ key is optional and the defaults make the package work standalone:
         "gsc_properties": {
             "kifpool": {"site": "https://kifpool.me/", "label": "Kifpool",
                         "default_window": "30d", "max_window": "90d",
-                        "directory_series": False},
+                        "directory_series": False,
+                        # Its own brand panel: a list of (label, regex), or a preset
+                        # name from keel_seo.gsc.build.BRAND_PRESETS. Absent: no panel.
+                        "brands": [("Kifpool", r"kifpool|کیف ?پول")],
+                        # Form words keyword clusters are keyed around; absent:
+                        # build.CLUSTER_QUALIFIERS_GENERIC.
+                        # "cluster_qualifiers": {...},
+                        },
         },
+        # The host property's own brand list and cluster form words. Defaults keep
+        # the SignalBots family's: "binary_options" and None (generic plus its words).
+        "gsc_brands": "binary_options",
+        "gsc_cluster_qualifiers": None,
 
         # ---- keel_seo.intent (one query intent, one canonical URL) ----
         # Dotted path to a callable returning this site's intent registry: which
@@ -148,6 +159,8 @@ _DEFAULTS = {
     "gsc_forbidden_redirect": None,
     "gsc_standalone_css": True,
     "gsc_properties": None,
+    "gsc_brands": "binary_options",
+    "gsc_cluster_qualifiers": None,
     "intent_registry_hook": None,
     "noindex_paths": (),
     "noindex_paths_robots": "noindex, nofollow",
