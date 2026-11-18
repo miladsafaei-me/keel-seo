@@ -5,7 +5,7 @@ import json
 import tempfile
 import unittest
 
-from keel_seo.audit import analyze, egress, findings
+from keel_seo.audit import analyze, egress, findings, reportdata
 from keel_seo.audit.parse import normalize_url, parse_page
 from keel_seo.audit.store import Workspace
 
@@ -125,3 +125,20 @@ class FindingsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReportDataTests(unittest.TestCase):
+    def test_weekly_keeps_whole_weeks_only(self):
+        import sqlite3
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE gsc_day (day TEXT PRIMARY KEY, clicks REAL, impressions REAL, position REAL)")
+        days = [f"2026-10-{number:02d}" for number in range(5, 15)]  # Monday 5th to Wednesday 14th
+        conn.executemany("INSERT INTO gsc_day VALUES (?, 1, 10, 5)", [(day,) for day in days])
+        self.assertEqual(reportdata._weekly(conn), [{"week": "2026-10-05", "clicks": 7, "impressions": 70}])
+
+    def test_demand_sums_per_finding(self):
+        urls = [{"findings": ["a-01", "b-02"], "impr_3m": 10.0, "clicks_3m": 1.0},
+                {"findings": ["a-01"], "impr_3m": 0.0, "clicks_3m": 0.0}]
+        demand = reportdata._demand(urls)
+        self.assertEqual(demand["a-01"], {"impressions_3m": 10, "clicks_3m": 1, "urls_with_impressions": 1})
+        self.assertEqual(demand["b-02"]["impressions_3m"], 10)

@@ -91,6 +91,27 @@ def _checklist(technical: dict, overview: dict, conn) -> list:
     return rows
 
 
+def _weekly(conn) -> list:
+    """Search Console totals per whole week (Monday to Sunday), oldest first; partial weeks are left out."""
+    rows = conn.execute(
+        "SELECT date(day, '-' || ((CAST(strftime('%w', day) AS INTEGER) + 6) % 7) || ' days') AS week, "
+        "COUNT(*), SUM(clicks), SUM(impressions) FROM gsc_day GROUP BY week ORDER BY week").fetchall()
+    return [{"week": week, "clicks": round(clicks or 0), "impressions": round(impressions or 0)}
+            for week, days, clicks, impressions in rows if days == 7]
+
+
+def _demand(urls: list) -> dict:
+    """Search demand of the last 91 days that sits on the URLs each finding names."""
+    demand: dict = {}
+    for item in urls:
+        for finding_id in item["findings"]:
+            entry = demand.setdefault(finding_id, {"impressions_3m": 0, "clicks_3m": 0, "urls_with_impressions": 0})
+            entry["impressions_3m"] += round(item.get("impr_3m", 0))
+            entry["clicks_3m"] += round(item.get("clicks_3m", 0))
+            entry["urls_with_impressions"] += 1 if item.get("impr_3m", 0) > 0 else 0
+    return demand
+
+
 def run(workspace: Workspace) -> dict:
     facts = {name: json.loads((workspace.facts / f"{name}.json").read_text(encoding="utf-8"))
              for name in ("overview", "technical", "performance")}
@@ -101,6 +122,8 @@ def run(workspace: Workspace) -> dict:
     conn = workspace.db()
     overview, performance = facts["overview"], facts["performance"]
 
+    demand = _demand(reconciled["urls"])
+    empty = {"impressions_3m": 0, "clicks_3m": 0, "urls_with_impressions": 0}
     areas: dict = {}
     for module in MODULES:
         findings = [finding for finding in reconciled["findings"] if finding["module"] == module]
@@ -111,7 +134,8 @@ def run(workspace: Workspace) -> dict:
             "findings": [{key: finding.get(key) for key in (
                 "id", "severity", "confidence", "effort", "action", "original_action", "pages", "url_change",
                 "verification", "title", "evidence", "recommendation", "expected_effect", "depends_on",
-                "merge_into", "strategist_note")} for finding in findings],
+                "merge_into", "strategist_note")} | {"demand": demand.get(finding["id"], empty)}
+                for finding in findings],
         }
     proposals: dict = {}
     by_id = {finding["id"]: finding for finding in reconciled["findings"]}
@@ -138,6 +162,7 @@ def run(workspace: Workspace) -> dict:
                    "redirecting": facts["technical"]["redirects"]["pages_redirecting"]},
         "spans": overview["search_console"],
         "monthly": performance["monthly"],
+        "weekly": _weekly(conn),
         "families": [{key: family[key] for key in ("family", "pages", "indexable", "clicks_3m", "impr_3m", "impr_16m",
                                                    "clicks_16m", "median_words")}
                      for family in sorted(overview["families"], key=lambda item: -item["impr_16m"])[:12]],
