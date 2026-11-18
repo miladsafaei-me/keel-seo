@@ -3,7 +3,8 @@
  * WeasyPrint. The same look as the Search Console report: Google Sans for headings,
  * Roboto for text, hairline tables and the four metric colours. Fonts are the Latin
  * subsets beside this file, with Vazirmatn for Persian and Arabic queries and pages
- * (SIL Open Font License, see fonts/OFL.txt).
+ * (SIL Open Font License, see fonts/OFL.txt). The font stacks are written out in
+ * each rule: WeasyPrint drops a font-family list read from a custom property.
  */
 @font-face { font-family: "Google Sans"; font-weight: 400; src: url("fonts/GoogleSans-Regular.ttf"); }
 @font-face { font-family: "Google Sans"; font-weight: 500; src: url("fonts/GoogleSans-Medium.ttf"); }
@@ -13,8 +14,6 @@
 @font-face { font-family: "Vazirmatn"; font-weight: 500; src: url("fonts/Vazirmatn-Medium.ttf"); }
 
 :root {
-  --pdf-display: "Google Sans", "Roboto", "Vazirmatn", sans-serif;
-  --pdf-text: "Roboto", "Vazirmatn", sans-serif;
   --pdf-ink: #202124;
   --pdf-ink-2: #5f6368;
   --pdf-line: #dadce0;
@@ -45,17 +44,17 @@
   @bottom-right { content: "Page " counter(page) " of " counter(pages); font-family: "Roboto", sans-serif; font-size: 8pt; color: #5f6368; }
 }
 
-.pdf { font-family: var(--pdf-text); font-size: var(--pdf-size); line-height: 1.45; color: var(--pdf-ink); margin: 0; }
+.pdf { font-family: "Roboto", "Vazirmatn", sans-serif; font-size: var(--pdf-size); line-height: 1.45; color: var(--pdf-ink); margin: 0; }
 .pdf-footer { position: running(footer); font-size: var(--pdf-size-small); color: var(--pdf-ink-2); }
 
 .pdf-masthead { display: flex; justify-content: space-between; align-items: center; padding-bottom: var(--pdf-gap); border-bottom: var(--pdf-bar) solid var(--pdf-blue); }
-.pdf-masthead__brand { margin: 0; display: flex; align-items: center; gap: 6pt; font-family: var(--pdf-display); font-weight: 500; font-size: 11pt; }
+.pdf-masthead__brand { margin: 0; display: flex; align-items: center; gap: 6pt; font-family: "Google Sans", "Roboto", "Vazirmatn", sans-serif; font-weight: 500; font-size: 11pt; }
 .pdf-masthead__logo { width: var(--pdf-logo); height: var(--pdf-logo); }
 .pdf-masthead__kind { margin: 0; color: var(--pdf-ink-2); font-size: var(--pdf-size-small); }
 
 .pdf-title { padding: 14pt 0 10pt; }
-.pdf-title__name { margin: 0; font-family: var(--pdf-display); font-weight: 400; font-size: var(--pdf-size-h1); line-height: 1.2; }
-.pdf-title__month { margin: 2pt 0 0; font-family: var(--pdf-display); font-weight: 500; font-size: 13pt; color: var(--pdf-blue); }
+.pdf-title__name { margin: 0; font-family: "Google Sans", "Roboto", "Vazirmatn", sans-serif; font-weight: 400; font-size: var(--pdf-size-h1); line-height: 1.2; }
+.pdf-title__month { margin: 2pt 0 0; font-family: "Google Sans", "Roboto", "Vazirmatn", sans-serif; font-weight: 500; font-size: 13pt; color: var(--pdf-blue); }
 .pdf-title__meta { margin: 4pt 0 0; color: var(--pdf-ink-2); }
 
 .pdf-tiles { display: flex; border: 1pt solid var(--pdf-line); border-radius: var(--pdf-radius); }
@@ -65,8 +64,8 @@
 .pdf-tile--impressions { border-top-color: var(--pdf-impressions); }
 .pdf-tile--ctr { border-top-color: var(--pdf-ctr); }
 .pdf-tile--position { border-top-color: var(--pdf-position); }
-.pdf-tile__label { margin: 0; font-family: var(--pdf-display); font-weight: 500; color: var(--pdf-ink-2); }
-.pdf-tile__value { margin: 2pt 0; font-family: var(--pdf-display); font-size: var(--pdf-size-tile); line-height: 1.15; }
+.pdf-tile__label { margin: 0; font-family: "Google Sans", "Roboto", "Vazirmatn", sans-serif; font-weight: 500; color: var(--pdf-ink-2); }
+.pdf-tile__value { margin: 2pt 0; font-family: "Google Sans", "Roboto", "Vazirmatn", sans-serif; font-size: var(--pdf-size-tile); line-height: 1.15; }
 .pdf-tile__line { margin: 0; font-size: var(--pdf-size-small); color: var(--pdf-ink-2); }
 .pdf-tiles--three { margin-bottom: var(--pdf-gap); }
 .pdf-change { font-weight: 500; }
@@ -76,14 +75,14 @@
 
 .pdf-section { margin-top: 14pt; }
 .pdf-keep { break-inside: avoid; }
-.pdf-h2 { margin: 0 0 6pt; font-family: var(--pdf-display); font-weight: 500; font-size: var(--pdf-size-h2); break-after: avoid; }
-.pdf-h3 { margin: 8pt 0 3pt; font-family: var(--pdf-display); font-weight: 500; font-size: var(--pdf-size); break-after: avoid; }
+.pdf-h2 { margin: 0 0 6pt; font-family: "Google Sans", "Roboto", "Vazirmatn", sans-serif; font-weight: 500; font-size: var(--pdf-size-h2); break-after: avoid; }
+.pdf-h3 { margin: 8pt 0 3pt; font-family: "Google Sans", "Roboto", "Vazirmatn", sans-serif; font-weight: 500; font-size: var(--pdf-size); break-after: avoid; }
 .pdf-small { margin: 3pt 0 6pt; font-size: var(--pdf-size-small); color: var(--pdf-ink-2); }
 .pdf-empty { margin: 0; padding: 8pt 10pt; background: var(--pdf-tint); border-radius: var(--pdf-radius); color: var(--pdf-ink-2); }
 .pdf-findings,
 .pdf-notes { margin: 0; padding-left: 14pt; }
 .pdf-findings li,
-.pdf-notes li { margin-bottom: 3pt; unicode-bidi: plaintext; }
+.pdf-notes li { margin-bottom: 3pt; }
 .pdf-notes { font-size: var(--pdf-size-small); color: var(--pdf-ink-2); }
 .pdf-key { display: inline-block; width: 8pt; height: 8pt; border-radius: 4pt; margin: 0 3pt 0 6pt; vertical-align: middle; }
 .pdf-key--clicks { background: var(--pdf-clicks); margin-left: 0; }
@@ -98,6 +97,6 @@
 .pdf-table th,
 .pdf-table td { padding: 4pt 5pt; border-bottom: 1pt solid var(--pdf-divider); text-align: right; white-space: nowrap; }
 .pdf-table thead th { color: var(--pdf-ink-2); font-weight: 500; border-bottom-color: var(--pdf-line); }
-.pdf-table .pdf-table__name { text-align: left; white-space: normal; width: 100%; unicode-bidi: plaintext; }
+.pdf-table .pdf-table__name { text-align: left; white-space: normal; width: 100%; }
 .pdf-table tr { break-inside: avoid; }
 .pdf-url { word-break: break-all; }

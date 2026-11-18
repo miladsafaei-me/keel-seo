@@ -32,7 +32,7 @@ RETRY_STATUSES = (429, 500, 502, 503, 504)
 MAX_RETRIES = 4
 WORKERS = 6
 # Bump when the payload shape changes, so a deploy never serves an old-shape entry.
-CACHE_VER = "r2"
+CACHE_VER = "r3"
 CACHE_TTL = 6 * 3600
 FRESHNESS_TTL = 3600
 

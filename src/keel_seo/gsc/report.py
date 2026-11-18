@@ -225,8 +225,13 @@ def daily_series(cur_rows: list, prev_rows: list, current: dict, compare: "dict 
         entry = {"date": day.isoformat(), **cur.get(day.isoformat(), zero)}
         if prev or (compare and compare.get("available")):
             pday = compare["start"] + dt.timedelta(days=i)
-            p = prev.get(pday.isoformat(), zero)
-            entry["prev"] = {"date": pday.isoformat(), **p}
+            if pday <= compare["end"]:
+                entry["prev"] = {"date": pday.isoformat(), **prev.get(pday.isoformat(), zero)}
+            else:
+                # A shorter comparison period (a 30-day month against a 31-day one) has
+                # no day here: nothing to draw, never a zero.
+                entry["prev"] = {"date": pday.isoformat(), "clicks": None, "impressions": None,
+                                 "ctr": None, "position": None}
         out.append(entry)
     return out
 

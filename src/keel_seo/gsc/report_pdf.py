@@ -45,7 +45,7 @@ def daily_chart(series: list, width: int = 680, height: int = 210) -> str:
         y = pt + ph * k / 3
         out.append(f'<line x1="{pl}" x2="{pl + pw}" y1="{y:.1f}" y2="{y:.1f}" stroke="{COLORS["grid"]}" stroke-width="1"/>')
     for side, metric in enumerate(("clicks", "impressions")):
-        vals = [d[metric] for d in series] + [(d.get("prev") or {}).get(metric, 0) for d in series]
+        vals = [d[metric] for d in series] + [(d.get("prev") or {}).get(metric) or 0 for d in series]
         top = _nice(max(vals) if vals else 0)
         ax = pl - 6 if side == 0 else pl + pw + 6
         anchor = "end" if side == 0 else "start"
@@ -58,7 +58,7 @@ def daily_chart(series: list, width: int = 680, height: int = 210) -> str:
 
         prev = [(d.get("prev") or {}).get(metric) for d in series]
         if any(v is not None for v in prev):
-            pts = " ".join(f"{x(i):.1f},{y(v or 0):.1f}" for i, v in enumerate(prev))
+            pts = " ".join(f"{x(i):.1f},{y(v):.1f}" for i, v in enumerate(prev) if v is not None)
             out.append(f'<polyline points="{pts}" fill="none" stroke="{COLORS[metric]}" stroke-width="1.5" '
                        f'stroke-dasharray="4 3" opacity="0.6"/>')
         pts = " ".join(f"{x(i):.1f},{y(d[metric]):.1f}" for i, d in enumerate(series))
@@ -197,13 +197,17 @@ def render(p: dict, prop: dict, brand: "dict | None" = None) -> bytes:
     """The PDF bytes of one monthly report."""
     try:
         from weasyprint import CSS, HTML
+        from weasyprint.text.fonts import FontConfiguration
     except Exception as exc:  # noqa: BLE001: missing package or missing Pango
         raise PdfUnavailable(f"PDF export needs keel-seo[pdf] and Pango on the host ({exc})") from exc
     from django.template.loader import render_to_string
 
     html = render_to_string("keel_seo/gsc/report_pdf.html", context(p, prop, brand))
-    return HTML(string=html, base_url=str(PDF_DIR) + "/").write_pdf(
-        stylesheets=[CSS(filename=str(PDF_DIR / "report.css"))])
+    # The stylesheet's @font-face rules load only through a font configuration shared
+    # by the stylesheet and the render; without it every font falls back to the system's.
+    fonts = FontConfiguration()
+    css = CSS(filename=str(PDF_DIR / "report.css"), font_config=fonts)
+    return HTML(string=html, base_url=str(PDF_DIR) + "/").write_pdf(stylesheets=[css], font_config=fonts)
 
 
 def filename(prop: dict, month: str) -> str:
