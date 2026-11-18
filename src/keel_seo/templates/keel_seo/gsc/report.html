@@ -26,10 +26,25 @@ report.js from the JSON at the end; everything else renders here.
   <header id="gsc-head" class="gsc-head">
     <div class="gsc-head__titles">
       <p class="gsc-head__property"><span class="gsc-head__label">{{ rp.label }}</span> <span class="gsc-head__site">{{ rp.site }}</span></p>
-      <h1 class="gsc-head__title">Performance on Search results</h1>
+      <h1 class="gsc-head__title" id="gsc-title" data-search="Performance on Search results" data-discover="Performance on Discover">Performance on Search results</h1>
     </div>
-    {% if report %}<p class="gsc-head__updated">Last update: data through {{ report.last_complete_label }}</p>{% endif %}
+    <div class="gsc-head__actions">
+      {% if report %}<p class="gsc-head__updated">Last update: data through {{ report.last_complete_label }}</p>{% endif %}
+      {% if months %}
+      <button type="button" class="gsc-textbutton gsc-head__export" data-open-dialog="gsc-pdf-dialog">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+        <span>Monthly report (PDF)</span>
+      </button>
+      {% endif %}
+    </div>
   </header>
+
+  {% if report %}
+  <div class="gsc-tabs gsc-views" role="tablist" data-tabs="view" aria-label="Report">
+    <button type="button" role="tab" class="gsc-tab" data-tab="search" aria-selected="true">Search results</button>
+    <button type="button" role="tab" class="gsc-tab" data-tab="discover" aria-selected="false">Discover</button>
+  </div>
+  {% endif %}
 
   <nav id="gsc-filters" class="gsc-filters" aria-label="Report filters">
     <button type="button" class="gsc-chip" data-open-dialog="gsc-type-dialog">
@@ -70,6 +85,7 @@ report.js from the JSON at the end; everything else renders here.
   </section>
   {% else %}
 
+  <div class="gsc-view" data-view="search">
   {% for a in alerts %}
   <section class="gsc-card gsc-notice{% if a.severe %} gsc-notice--error{% else %} gsc-notice--info{% endif %} gsc-alert" aria-label="Sudden change">
     <svg class="gsc-notice__icon" viewBox="0 0 24 24" aria-hidden="true">{% if a.kind == "drop" %}<path d="M16 18l2.29-2.29-4.88-4.88-4 4L2 7.41 3.41 6l6 6 4-4 6.3 6.29L22 12v6z"/>{% else %}<path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/>{% endif %}</svg>
@@ -135,6 +151,30 @@ report.js from the JSON at the end; everything else renders here.
     </div>
     <p class="gsc-tab-note" id="gsc-opportunities-note"></p>
     <div class="gsc-table-host" id="gsc-opportunities-table"></div>
+  </section>
+
+  <section id="gsc-devices" class="gsc-card" aria-labelledby="gsc-devices-title">
+    <header class="gsc-card__head">
+      <h3 class="gsc-card__title" id="gsc-devices-title">Mobile and desktop</h3>
+      <p class="gsc-card__sub">Each device's share of the traffic, then the pages that do clearly worse on mobile: at least 3 places lower, or under half the desktop click rate at a similar position ({{ report.query_page_span }}).</p>
+    </header>
+    <div class="gsc-table-scroll">
+      <table class="gsc-table gsc-table--compact">
+        <thead><tr><th class="gsc-table__name" scope="col">Device</th><th scope="col">Clicks</th><th scope="col">Share</th><th scope="col">Impressions</th><th scope="col">CTR</th><th scope="col">Position</th>{% if report.compare.available %}<th scope="col">Clicks change</th>{% endif %}</tr></thead>
+        <tbody>
+          {% for d in device_rows %}
+          <tr>
+            <th class="gsc-table__name" scope="row">{{ d.label }}</th>
+            <td data-num="{{ d.clicks }}">{{ d.clicks }}</td><td>{{ d.clicks_pct }}%</td>
+            <td data-num="{{ d.impressions }}">{{ d.impressions }}</td><td>{{ d.ctr }}%</td><td>{{ d.position|default:"-" }}</td>
+            {% if report.compare.available %}<td>{% if d.change %}<span class="gsc-tile__change gsc-tile__change--{{ d.change.tone }}">{{ d.change.text }}</span>{% else %}-{% endif %}</td>{% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <h4 class="gsc-subtitle">Pages weaker on mobile <span class="gsc-tab__count">{{ report.device_gap|length }}</span></h4>
+    <div class="gsc-table-host" id="gsc-device-gap"></div>
   </section>
 
   {% if report.compare.available %}
@@ -254,6 +294,43 @@ report.js from the JSON at the end; everything else renders here.
     {% endif %}
   </section>
 
+  </div>
+
+  <div class="gsc-view" data-view="discover" hidden>
+    {% if report.discover.available %}
+    <section id="gsc-discover" class="gsc-card gsc-performance" aria-label="Discover performance">
+      <div class="gsc-tiles gsc-tiles--three" role="group" aria-label="Metrics on the Discover chart">
+        {% for t in discover_tiles %}
+        <button type="button" class="gsc-tile gsc-tile--{{ t.key }}" data-metric="{{ t.key }}" aria-pressed="{% if t.key == 'clicks' or t.key == 'impressions' %}true{% else %}false{% endif %}">
+          <span class="gsc-tile__label"><span class="gsc-tile__check" aria-hidden="true"></span>{{ t.label }}</span>
+          <span class="gsc-tile__value">{{ t.value }}</span>
+          {% if t.prev %}
+          <span class="gsc-tile__compare">
+            <span class="gsc-tile__prev">{{ t.prev }} before</span>
+            {% if t.change %}<span class="gsc-tile__change gsc-tile__change--{{ t.change.tone }}" title="{{ t.change.title }}">{{ t.change.text }}</span>{% endif %}
+          </span>
+          {% endif %}
+        </button>
+        {% endfor %}
+      </div>
+      <div class="gsc-chart" id="gsc-discover-chart" role="img" aria-label="Daily Discover traffic"></div>
+    </section>
+    <section id="gsc-discover-breakdown" class="gsc-card gsc-breakdown" aria-label="Discover breakdown">
+      <div class="gsc-tabs" role="tablist" data-tabs="discover">
+        <button type="button" role="tab" class="gsc-tab" data-tab="page" aria-selected="true">Pages</button>
+        <button type="button" role="tab" class="gsc-tab" data-tab="country" aria-selected="false">Countries</button>
+        <button type="button" role="tab" class="gsc-tab" data-tab="date" aria-selected="false">Dates</button>
+      </div>
+      <div class="gsc-table-host" id="gsc-discover-table"></div>
+    </section>
+    <p class="gsc-head__updated">Discover counts a click and an impression each time a page shows in Google's Discover feed. It has no queries and no position, so only pages, countries and dates break it down.</p>
+    {% else %}
+    <section class="gsc-card gsc-notice gsc-notice--info" aria-label="Discover">
+      <p class="gsc-notice__text">{{ report.discover.reason }} Discover shows pages in Google's feed without a search; a property appears here once Google has shown one of its pages there.</p>
+    </section>
+    {% endif %}
+  </div>
+
   <section id="gsc-notes" class="gsc-card" aria-labelledby="gsc-notes-title">
     <header class="gsc-card__head"><h3 class="gsc-card__title" id="gsc-notes-title">About this data</h3></header>
     <ul class="gsc-notes">{% for n in notes %}<li class="gsc-notes__item">{{ n }}</li>{% endfor %}</ul>
@@ -262,6 +339,22 @@ report.js from the JSON at the end; everything else renders here.
   {% endif %}
 
   {% comment %} Dialogs: the date range and comparison, the search type, one filter. {% endcomment %}
+  <dialog id="gsc-pdf-dialog" class="gsc-dialog" aria-labelledby="gsc-pdf-dialog-title">
+    <form method="get" class="gsc-dialog__form" data-download>
+      <h2 class="gsc-dialog__title" id="gsc-pdf-dialog-title">Monthly report</h2>
+      <p class="gsc-dialog__text">A PDF for the client: one complete month against the month before and the same month a year earlier, with the top queries and pages, devices, Discover, opportunities and notes about the data.</p>
+      <input type="hidden" name="download" value="pdf">
+      <label class="gsc-field"><span class="gsc-field__label">Month</span>
+        <select class="gsc-field__input" name="month">{% for key, label in months %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+      </label>
+      <p class="gsc-dialog__text gsc-dialog__hint">Building it takes a few seconds, up to half a minute for a very large property.</p>
+      <footer class="gsc-dialog__actions">
+        <button type="button" class="gsc-textbutton" data-close-dialog>Cancel</button>
+        <button type="submit" class="gsc-textbutton gsc-textbutton--primary">Download</button>
+      </footer>
+    </form>
+  </dialog>
+
   <dialog id="gsc-date-dialog" class="gsc-dialog" aria-labelledby="gsc-date-dialog-title">
     <form method="dialog" class="gsc-dialog__form" data-apply="date">
       <h2 class="gsc-dialog__title" id="gsc-date-dialog-title">Date range</h2>

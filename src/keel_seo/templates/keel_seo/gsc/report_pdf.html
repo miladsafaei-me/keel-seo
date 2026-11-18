@@ -1,0 +1,152 @@
+<!doctype html>
+{% load keel_seo_numbers %}
+{% comment %}
+The monthly client report (keel_seo.gsc.report_pdf). Printed by WeasyPrint with
+gsc/pdf/report.css; every chart is an SVG with its key values printed on it.
+{% endcomment %}
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ prop.label|default:prop.site }}: Search Console report, {{ p.month_label }}</title>
+</head>
+<body class="pdf">
+<footer id="pdf-footer" class="pdf-footer">{% if brand.name %}Prepared by {{ brand.name }} from {% else %}From {% endif %}Google Search Console data on {{ generated|date:"M j, Y" }}.</footer>
+
+<header id="pdf-masthead" class="pdf-masthead">
+  <p class="pdf-masthead__brand">{% if logo %}<img class="pdf-masthead__logo" src="{{ logo }}" alt="">{% endif %}{{ brand.name }}</p>
+  <p class="pdf-masthead__kind">Google Search Console report</p>
+</header>
+
+<section id="pdf-title" class="pdf-title">
+  <h1 class="pdf-title__name">{{ prop.label|default:prop.site }}</h1>
+  <p class="pdf-title__month">{{ p.month_label }}</p>
+  <p class="pdf-title__meta">{{ prop.site }} · {{ p.range.span }}, compared with {{ p.compare.label }}{% if p.year_totals %} and {{ p.year_label }}{% endif %}</p>
+</section>
+
+<section id="pdf-figures" class="pdf-tiles">
+  {% for t in tiles %}
+  <div class="pdf-tile pdf-tile--{{ t.key }}">
+    <p class="pdf-tile__label">{{ t.label }}</p>
+    <p class="pdf-tile__value">{{ t.value }}</p>
+    {% if t.prev %}<p class="pdf-tile__line">{{ compare_short }}: {{ t.prev }}{% if t.change %} <span class="pdf-change pdf-change--{{ t.change.tone }}">{{ t.change.text }}</span>{% endif %}</p>{% endif %}
+    {% if t.year %}<p class="pdf-tile__line">{{ year_short }}: {{ t.year }}{% if t.year_change %} <span class="pdf-change pdf-change--{{ t.year_change.tone }}">{{ t.year_change.text }}</span>{% endif %}</p>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+<p class="pdf-small">Changes in clicks and impressions compare the average day, because months differ in length.</p>
+
+<section id="pdf-findings" class="pdf-section">
+  <h2 class="pdf-h2">The month in brief</h2>
+  <ul class="pdf-findings">{% for f in p.findings %}<li>{{ f }}</li>{% endfor %}</ul>
+</section>
+
+<section id="pdf-daily" class="pdf-section pdf-keep">
+  <h2 class="pdf-h2">Day by day</h2>
+  <p class="pdf-small"><span class="pdf-key pdf-key--clicks"></span>Clicks <span class="pdf-key pdf-key--impressions"></span>Impressions · dashed: {{ p.compare.label }}, day for day</p>
+  <div class="pdf-chart">{{ daily_chart }}</div>
+</section>
+
+<section id="pdf-months" class="pdf-section pdf-keep">
+  <h2 class="pdf-h2">The last 13 months</h2>
+  <div class="pdf-two">
+    <div><h3 class="pdf-h3">Clicks</h3>{{ clicks_bars }}</div>
+    <div><h3 class="pdf-h3">Impressions</h3>{{ impressions_bars }}</div>
+  </div>
+</section>
+
+<section id="pdf-queries" class="pdf-section">
+  <h2 class="pdf-h2">Top queries</h2>
+  <table class="pdf-table">
+    <thead><tr><th class="pdf-table__name">Query</th><th>Clicks</th><th>Change</th><th>Impressions</th><th>CTR</th><th>Position</th></tr></thead>
+    <tbody>{% for r in queries %}<tr><td class="pdf-table__name">{{ r.name }}</td><td>{{ r.clicks|thousands }}</td><td>{% if r.delta is not None %}{% if r.delta > 0 %}+{% endif %}{{ r.delta|thousands }}{% else %}-{% endif %}</td><td>{{ r.impressions|thousands }}</td><td>{{ r.ctr }}%</td><td>{{ r.position|default:"-" }}</td></tr>{% empty %}<tr><td colspan="6">No query is listed for this month.</td></tr>{% endfor %}</tbody>
+  </table>
+  <p class="pdf-small">The listed queries cover {{ p.coverage.clicks_pct|default:"0" }}% of clicks; Google leaves very rare queries out of every list.</p>
+</section>
+
+<section id="pdf-pages" class="pdf-section">
+  <h2 class="pdf-h2">Top pages</h2>
+  <table class="pdf-table">
+    <thead><tr><th class="pdf-table__name">Page</th><th>Clicks</th><th>Change</th><th>Impressions</th><th>CTR</th><th>Position</th></tr></thead>
+    <tbody>{% for r in pages %}<tr><td class="pdf-table__name pdf-url">{{ r.name }}</td><td>{{ r.clicks|thousands }}</td><td>{% if r.delta is not None %}{% if r.delta > 0 %}+{% endif %}{{ r.delta|thousands }}{% else %}-{% endif %}</td><td>{{ r.impressions|thousands }}</td><td>{{ r.ctr }}%</td><td>{{ r.position|default:"-" }}</td></tr>{% empty %}<tr><td colspan="6">No page had impressions this month.</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+
+<section id="pdf-audience" class="pdf-section pdf-keep">
+  <h2 class="pdf-h2">Countries and devices</h2>
+  <div class="pdf-two">
+    <div><table class="pdf-table">
+      <thead><tr><th class="pdf-table__name">Country</th><th>Clicks</th><th>Impressions</th></tr></thead>
+      <tbody>{% for r in countries %}<tr><td class="pdf-table__name">{{ r.name }}</td><td>{{ r.clicks|thousands }}</td><td>{{ r.impressions|thousands }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <div><table class="pdf-table">
+      <thead><tr><th class="pdf-table__name">Device</th><th>Clicks</th><th>Share</th><th>CTR</th><th>Position</th></tr></thead>
+      <tbody>{% for d in devices %}<tr><td class="pdf-table__name">{{ d.label }}</td><td>{{ d.clicks|thousands }}</td><td>{{ d.clicks_pct }}%</td><td>{{ d.ctr }}%</td><td>{{ d.position|default:"-" }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </div>
+</section>
+
+<section id="pdf-device-gap" class="pdf-section pdf-keep">
+  <h2 class="pdf-h2">Pages weaker on mobile</h2>
+  <p class="pdf-small">Pages that rank at least 3 places lower on mobile, or earn under half their desktop click rate at a similar position ({{ p.query_page_span }}).</p>
+  {% if device_gap %}
+  <table class="pdf-table">
+    <thead><tr><th class="pdf-table__name">Page</th><th>Position mobile</th><th>Position desktop</th><th>CTR mobile</th><th>CTR desktop</th><th>Clicks missed</th></tr></thead>
+    <tbody>{% for g in device_gap %}<tr><td class="pdf-table__name pdf-url">{{ g.key }}</td><td>{{ g.mobile.position }}</td><td>{{ g.desktop.position }}</td><td>{{ g.mobile.ctr }}%</td><td>{{ g.desktop.ctr }}%</td><td>{{ g.missed|thousands }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="pdf-empty">No page does clearly worse on mobile this month.</p>{% endif %}
+</section>
+
+<section id="pdf-discover" class="pdf-section pdf-keep">
+  <h2 class="pdf-h2">Google Discover</h2>
+  {% if discover.available %}
+  <div class="pdf-tiles pdf-tiles--three">
+    {% for t in discover_tiles %}<div class="pdf-tile"><p class="pdf-tile__label">{{ t.label }}</p><p class="pdf-tile__value">{{ t.value }}</p>{% if t.change %}<p class="pdf-tile__line"><span class="pdf-change pdf-change--{{ t.change.tone }}">{{ t.change.text }}</span></p>{% endif %}</div>{% endfor %}
+  </div>
+  <table class="pdf-table">
+    <thead><tr><th class="pdf-table__name">Page in Discover</th><th>Clicks</th><th>Impressions</th><th>CTR</th></tr></thead>
+    <tbody>{% for r in discover_pages %}<tr><td class="pdf-table__name pdf-url">{{ r.name }}</td><td>{{ r.clicks|thousands }}</td><td>{{ r.impressions|thousands }}</td><td>{{ r.ctr }}%</td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="pdf-empty">{{ discover.reason }}</p>{% endif %}
+</section>
+
+<section id="pdf-opportunities" class="pdf-section">
+  <h2 class="pdf-h2">Where the next clicks are</h2>
+  <div class="pdf-group">
+  <h3 class="pdf-h3">Close to the top of page 1</h3>
+  <p class="pdf-small">Queries in positions 4 to 20 with at least {{ p.min_impressions }} impressions.</p>
+  {% if striking %}
+  <table class="pdf-table">
+    <thead><tr><th class="pdf-table__name">Query</th><th>Position</th><th>Impressions</th><th>Clicks</th></tr></thead>
+    <tbody>{% for r in striking %}<tr><td class="pdf-table__name">{{ r.key }}</td><td>{{ r.position }}</td><td>{{ r.impressions|thousands }}</td><td>{{ r.clicks|thousands }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="pdf-empty">No query qualifies this month.</p>{% endif %}
+  </div>
+  <div class="pdf-group">
+  <h3 class="pdf-h3">On page 1 but rarely clicked</h3>
+  <p class="pdf-small">Queries earning under 60% of this site's usual click rate for their position; the title and description are the usual fix.</p>
+  {% if low_ctr %}
+  <table class="pdf-table">
+    <thead><tr><th class="pdf-table__name">Query</th><th>Position</th><th>CTR</th><th>Usual CTR</th><th>Clicks missed</th></tr></thead>
+    <tbody>{% for r in low_ctr %}<tr><td class="pdf-table__name">{{ r.key }}</td><td>{{ r.position }}</td><td>{{ r.ctr }}%</td><td>{{ r.expected_ctr }}%</td><td>{{ r.missed|thousands }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="pdf-empty">No query qualifies this month.</p>{% endif %}
+  </div>
+</section>
+
+{% if brand_rows %}
+<section id="pdf-brand" class="pdf-section pdf-keep">
+  <h2 class="pdf-h2">Brand and non-brand searches</h2>
+  <table class="pdf-table">
+    <thead><tr><th class="pdf-table__name">Searches</th><th>Clicks</th><th>Share</th><th>Impressions</th><th>Share</th></tr></thead>
+    <tbody>{% for r in brand_rows %}<tr><td class="pdf-table__name">{{ r.label }}</td><td>{{ r.clicks|thousands }}</td><td>{{ r.clicks_pct }}%</td><td>{{ r.impressions|thousands }}</td><td>{{ r.impressions_pct }}%</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+{% endif %}
+
+<section id="pdf-notes" class="pdf-section pdf-keep">
+  <h2 class="pdf-h2">About this data</h2>
+  <ul class="pdf-notes">{% for n in notes %}<li>{{ n }}</li>{% endfor %}</ul>
+</section>
+
+</body>
+</html>

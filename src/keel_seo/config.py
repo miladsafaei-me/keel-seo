@@ -120,6 +120,9 @@ key is optional and the defaults make the package work standalone:
         # snapshot-and-insights dashboard for a host that still curates insights or
         # queues content from it, until that workflow moves onto the report.
         "gsc_dashboard": "report",
+        # Who the monthly client PDF says prepared it: {"name": ..., "logo": <file path,
+        # SVG or PNG>}. None: the PDF carries no agency name.
+        "gsc_report_brand": {"name": "RESONANS", "logo": "/app/brand/favicon.svg"},
 
         # ---- keel_seo.intent (one query intent, one canonical URL) ----
         # Dotted path to a callable returning this site's intent registry: which
@@ -167,6 +170,7 @@ _DEFAULTS = {
     "gsc_brands": "binary_options",
     "gsc_cluster_qualifiers": None,
     "gsc_dashboard": "report",
+    "gsc_report_brand": None,
     "intent_registry_hook": None,
     "noindex_paths": (),
     "noindex_paths_robots": "noindex, nofollow",

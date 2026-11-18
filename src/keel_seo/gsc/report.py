@@ -649,7 +649,10 @@ def compact(value, kind: str = "count") -> str:
         if abs(v) >= div:
             n = v / div
             digits = 2 if n < 10 else (1 if n < 100 else 0)
-            return f"{n:.{digits}f}".rstrip("0").rstrip(".") + suffix
+            text = f"{n:.{digits}f}"
+            if "." in text:
+                text = text.rstrip("0").rstrip(".")
+            return text + suffix
     return f"{int(v):,}"
 
 
@@ -700,8 +703,11 @@ def notes(payload: dict) -> list:
     else:
         out.append(f"Figures run to {last}, the last day Google has finished.")
     comp = payload.get("compare")
-    if comp and comp.get("available"):
+    if comp and comp.get("available") and comp["days"] == payload["range"]["days"]:
         out.append(f"The comparison period, {comp['span']}, has the same {payload['range']['days']} days as the range.")
+    elif comp and comp.get("available"):
+        out.append(f"The comparison period, {comp['span']}, has {comp['days']} days against {payload['range']['days']}, "
+                   "so changes in clicks and impressions compare the average day.")
     elif comp and not comp.get("available"):
         out.append("Search Console keeps 16 months of data, so there is no earlier period of this length to compare with.")
     cov = payload.get("coverage") or {}
@@ -716,4 +722,164 @@ def notes(payload: dict) -> list:
     out.append(f"Landing pages and competing pages use the last {QUERY_PAGE_MAX_DAYS} days of the range "
                f"({payload['query_page_span']}). An opportunity needs at least "
                f"{payload['min_impressions']} impressions in the range.")
+    return out
+
+
+# ---- mobile and desktop ----
+
+def device_split(device_rows: list, prev_rows: "list | None") -> list:
+    """Each device's share of clicks and impressions, its CTR and position, and its
+    change against the comparison period."""
+    cur, prev = keyed(device_rows), keyed(prev_rows) if prev_rows is not None else {}
+    tc = sum(m["clicks"] for m in cur.values()) or 0
+    ti = sum(m["impressions"] for m in cur.values()) or 0
+    out = []
+    for dev in DEVICES:
+        m = cur.get(dev)
+        if not m:
+            continue
+        out.append({"key": dev, "label": dev.capitalize(), **m,
+                    "clicks_pct": round(m["clicks"] / tc * 100, 1) if tc else 0.0,
+                    "impressions_pct": round(m["impressions"] / ti * 100, 1) if ti else 0.0,
+                    "changes": changes(m, prev.get(dev)) if prev_rows is not None else {}})
+    return out
+
+
+# A page counts as weaker on mobile when it ranks this many places lower there, or
+# earns under this share of its desktop click rate at a similar position.
+GAP_PLACES = 3.0
+GAP_CTR_SHARE = 0.5
+
+
+def device_gap(page_device_rows: list, days: int, limit: int = 200) -> list:
+    """Pages that do clearly worse on mobile than on desktop, with the clicks the gap
+    costs on mobile: (desktop CTR - mobile CTR) x mobile impressions."""
+    pages: dict = {}
+    for r in page_device_rows or []:
+        keys = r.get("keys") or []
+        if len(keys) >= 2:
+            pages.setdefault(keys[0], {})[keys[1]] = _row(r)
+    floor = max(5, min_impressions(days) // 2)
+    out = []
+    for page, devs in pages.items():
+        mob, desk = devs.get("MOBILE"), devs.get("DESKTOP")
+        if not mob or not desk or mob["impressions"] < floor or desk["impressions"] < floor:
+            continue
+        places = round(mob["position"] - desk["position"], 1)
+        similar = abs(places) < GAP_PLACES
+        weak_ctr = desk["ctr"] > 0 and mob["ctr"] < desk["ctr"] * GAP_CTR_SHARE and similar
+        if places >= GAP_PLACES or weak_ctr:
+            missed = max(0, round((desk["ctr"] - mob["ctr"]) / 100 * mob["impressions"]))
+            out.append({"key": page, "mobile": mob, "desktop": desk, "places": places,
+                        "reason": "rank" if places >= GAP_PLACES else "ctr", "missed": missed})
+    out.sort(key=lambda r: (-r["missed"], -r["places"], -r["mobile"]["impressions"]))
+    return out[:limit]
+
+
+# ---- months ----
+
+def month_bounds(month: str) -> "tuple[dt.date, dt.date] | None":
+    """``YYYY-MM`` -> (first day, last day)."""
+    try:
+        y, m = (int(x) for x in month.split("-"))
+        return dt.date(y, m, 1), dt.date(y, m, calendar.monthrange(y, m)[1])
+    except (ValueError, AttributeError):
+        return None
+
+
+def complete_months(last_complete: dt.date, today: dt.date, limit: int = 15) -> list:
+    """``[(YYYY-MM, "October 2026"), ...]``, newest first: the months Google has fully
+    finished and still holds."""
+    first = earliest_date(today)
+    out = []
+    d = dt.date(last_complete.year, last_complete.month, 1)
+    while len(out) < limit:
+        start, end = month_bounds(f"{d:%Y-%m}")
+        if end <= last_complete and start >= first:
+            out.append((f"{d:%Y-%m}", f"{d:%B %Y}"))
+        elif start < first:
+            break
+        d = add_months(d, -1)
+    return out
+
+
+def monthly_totals(history_rows: list, months: int = 13, last: "dt.date | None" = None) -> list:
+    """Totals per calendar month from the daily history, oldest first, complete months
+    only (``last`` is the last complete day)."""
+    agg: dict = {}
+    for r in history_rows or []:
+        d = parse_date((r.get("keys") or [""])[0])
+        if d:
+            agg.setdefault(f"{d:%Y-%m}", []).append(r)
+    out = []
+    for key in sorted(agg):
+        start, end = month_bounds(key)
+        if last and end > last:
+            continue
+        if len(agg[key]) < (end - start).days + 1 - 3:
+            continue
+        out.append({"month": key, "label": f"{start:%b %Y}", **totals_of(agg[key])})
+    return out[-months:]
+
+
+def per_day_changes(cur: dict, prev: "dict | None", cur_days: int, prev_days: int) -> dict:
+    """Changes between periods of different lengths (calendar months): counts compare
+    their daily averages; CTR and position compare as they are."""
+    if not prev:
+        return {}
+    scale = cur_days / prev_days if prev_days else 1
+    scaled = {**prev, "clicks": prev["clicks"] * scale, "impressions": prev["impressions"] * scale}
+    return changes(cur, scaled)
+
+
+def findings(p: dict) -> list:
+    """The month in plain sentences, for the client report."""
+    out = []
+    ch, prev_label = p.get("changes") or {}, (p.get("compare") or {}).get("label", "the month before")
+
+    def verb(c, up="rose", down="fell"):
+        return up if c["value"] > 0 else down
+
+    if ch.get("clicks") and ch["clicks"]["value"] is not None and not ch["clicks"]["flat"]:
+        c, i = ch["clicks"], ch.get("impressions")
+        text = f"Clicks {verb(c)} {abs(c['value']):g}% a day against {prev_label}"
+        if i and i["value"] is not None and not i["flat"]:
+            text += f", and impressions {verb(i)} {abs(i['value']):g}%"
+        out.append(text + ".")
+    yoy = p.get("year_changes") or {}
+    if yoy.get("clicks") and yoy["clicks"]["value"] is not None:
+        c = yoy["clicks"]
+        out.append(f"Against {p['year_label']}, clicks are {abs(c['value']):g}% {'higher' if c['value'] > 0 else 'lower'} a day.")
+    pos = ch.get("position")
+    if pos and pos["value"]:
+        out.append(f"The average position {'improved' if pos['value'] > 0 else 'slipped'} by {abs(pos['value']):g} places, "
+                   f"to {p['totals']['position']}.")
+    for e in p.get("month_events") or []:
+        out.append(event_sentence(e))
+    mv = (p.get("movers") or {}).get("query") or {}
+    if mv.get("up"):
+        top = mv["up"][0]
+        out.append(f"The query that gained most was “⁨{top['key']}⁩”: {top['clicks']:,} clicks, up from {top['prev_clicks']:,}.")
+    if mv.get("down"):
+        top = mv["down"][0]
+        out.append(f"The query that lost most was “⁨{top['key']}⁩”: {top['clicks']:,} clicks, down from {top['prev_clicks']:,}.")
+    brand = p.get("brand")
+    if brand:
+        rows = {r["key"]: r for r in brand["rows"]}
+        out.append(f"Searches that name the brand brought {rows['brand']['clicks_pct']}% of clicks; "
+                   f"other searches brought {rows['nonbrand']['clicks_pct']}%, and {rows['hidden']['clicks_pct']}% came "
+                   "from rare queries Google does not list.")
+    mobile = next((d for d in p.get("devices") or [] if d["key"] == "MOBILE"), None)
+    if mobile:
+        gap = p.get("device_gap") or []
+        text = f"Mobile brought {mobile['clicks_pct']}% of clicks"
+        text += (f"; {len(gap)} {'page does' if len(gap) == 1 else 'pages do'} clearly worse on mobile than on desktop." if gap else ".")
+        out.append(text)
+    disc = p.get("discover") or {}
+    if disc.get("available") and disc["totals"]["clicks"]:
+        out.append(f"Google Discover added {compact(disc['totals']['clicks'])} clicks from "
+                   f"{compact(disc['totals']['impressions'])} impressions.")
+    n = len((p.get("opportunities") or {}).get("striking") or [])
+    if n:
+        out.append(f"{n} {'query ranks' if n == 1 else 'queries rank'} in positions 4 to 20 with real demand: the nearest gains.")
     return out

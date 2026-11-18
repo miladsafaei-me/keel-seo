@@ -127,6 +127,7 @@ fork of this code.
 | `KEEL_SEO["gsc_queue_list_url_name"]` | `config.gsc_queue_list_url` | none → no link | reverse()-able URL name, no args |
 | `KEEL_SEO["gsc_plan_edit_url_name"]` | `gsc/views.queue` | none → no link | reverse()-able URL name, `args=[pk]` |
 | `KEEL_SEO["gsc_forbidden_redirect"]` | `gsc/views._forbidden` | none → Django 403 | reverse()-able URL name |
+| `KEEL_SEO["gsc_report_brand"]` | `gsc/views.monthly_pdf` | none → no agency name | `{"name": ..., "logo": <svg or png path>}` on the monthly client PDF |
 | `KEEL_SEO["gsc_dashboard"]` | `gsc/views.SearchConsoleView` | `"report"` → the one report | `"classic"` keeps the snapshot-and-insights dashboard |
 | `KEEL_SEO["intent_registry_hook"]` | `intent.load_registry` | none → empty registry, nothing enforced | `() -> {"intents": [...], "entity_families": {...}, "guarded_prefixes": [...]}` |
 

@@ -320,8 +320,8 @@
         if (spec.onRow && spec.onRow(row)) {
           tr.dataset.filter = "1";
           tr.tabIndex = 0;
-          tr.addEventListener("click", function (ev) { if (!ev.target.closest("a")) window.location.search = spec.onRow(row); });
-          tr.addEventListener("keydown", function (ev) { if (ev.key === "Enter") window.location.search = spec.onRow(row); });
+          tr.addEventListener("click", function (ev) { if (!ev.target.closest("a")) window.location.href = "?" + spec.onRow(row); });
+          tr.addEventListener("keydown", function (ev) { if (ev.key === "Enter") window.location.href = "?" + spec.onRow(row); });
         }
         spec.columns.forEach(function (c) {
           var td = el(c.name ? "th" : "td", c.name ? "gsc-table__name" : (c.cls || ""));
@@ -455,6 +455,23 @@
     });
   });
 
+  var download = root.querySelector("form[data-download]");
+  if (download) {
+    download.addEventListener("submit", function () {
+      window.setTimeout(function () { download.closest("dialog").close(); }, 300);
+    });
+  }
+  tabs("view", function (name) {
+    root.querySelectorAll("[data-view]").forEach(function (v) { v.hidden = v.dataset.view !== name; });
+    var title = document.getElementById("gsc-title");
+    if (title && title.dataset[name]) title.textContent = title.dataset[name];
+    try { window.history.replaceState(null, "", name === "search" ? window.location.pathname + window.location.search : "#" + name); } catch (e) { /* no history */ }
+  });
+  if (window.location.hash === "#discover") {
+    var dt = root.querySelector("[data-tabs=view] [data-tab=discover]");
+    if (dt) dt.click();
+  }
+
   var filterDialog = document.getElementById("gsc-filter-dialog");
   var FILTER_OPS = { query: ["contains", "notContains", "equals"], page: ["contains", "notContains", "equals"], country: ["equals"], device: ["equals"] };
   var FILTER_NAMES = { query: "Query", page: "Page", country: "Country", device: "Device" };
@@ -540,7 +557,7 @@
   /* ---- performance chart and tiles ---- */
 
   var selected = readMetrics();
-  var tiles = root.querySelectorAll(".gsc-tile");
+  var tiles = root.querySelectorAll("#gsc-performance .gsc-tile");
   function syncTiles() {
     tiles.forEach(function (t) { t.setAttribute("aria-pressed", selected.indexOf(t.dataset.metric) >= 0 ? "true" : "false"); });
   }
@@ -763,5 +780,81 @@
       onRow: function (r) { return r.other || r.key === "/" ? null : withFilter("page", r.key + "/").replace("page_op=equals", "page_op=contains"); },
       empty: "No page has impressions in this range."
     });
+  }
+  /* ---- mobile and desktop ---- */
+
+  var gapHost = document.getElementById("gsc-device-gap");
+  if (gapHost) {
+    var pct = function (v) { return v === null || v === undefined ? "-" : v.toFixed(1) + "%"; };
+    renderTable({
+      host: gapHost,
+      columns: [
+        { key: "key", label: "Page", name: true, render: nameCell("page") },
+        { key: "mpos", label: "Position mobile", kind: "position", get: function (r) { return r.mobile.position; } },
+        { key: "dpos", label: "Position desktop", kind: "position", get: function (r) { return r.desktop.position; } },
+        { key: "mctr", label: "CTR mobile", kind: "ctr", get: function (r) { return r.mobile.ctr; }, render: function (td, r) { td.textContent = pct(r.mobile.ctr); } },
+        { key: "dctr", label: "CTR desktop", kind: "ctr", get: function (r) { return r.desktop.ctr; }, render: function (td, r) { td.textContent = pct(r.desktop.ctr); } },
+        { key: "mimpr", label: "Impressions mobile", kind: "count", get: function (r) { return r.mobile.impressions; } },
+        { key: "missed", label: "Clicks missed", kind: "count" }
+      ],
+      rows: data.device_gap || [], sort: "missed", dir: "desc",
+      onRow: function (r) { return withFilter("page", r.key); },
+      empty: "No page does clearly worse on mobile in this range."
+    });
+  }
+
+  /* ---- Discover ---- */
+
+  var disc = data.discover || {};
+  var discHost = document.getElementById("gsc-discover-chart");
+  if (disc.available && discHost) {
+    var discSelected = ["clicks", "impressions"];
+    var discTiles = root.querySelectorAll("#gsc-discover .gsc-tile");
+    var discPrev = disc.series.length && disc.series[0].prev;
+    var drawDiscover = function () {
+      drawChart({
+        host: discHost,
+        labels: disc.series.map(function (d) { return d.date; }),
+        prevLabels: discPrev ? disc.series.map(function (d) { return d.prev.date; }) : null,
+        series: ["clicks", "impressions", "ctr"].filter(function (m) { return discSelected.indexOf(m) >= 0; }).map(function (m) {
+          return { metric: m, values: disc.series.map(function (d) { return d[m]; }),
+            prev: discPrev ? disc.series.map(function (d) { return d.prev[m]; }) : null };
+        }),
+        marks: []
+      });
+    };
+    discTiles.forEach(function (t) {
+      t.addEventListener("click", function () {
+        var m = t.dataset.metric, i = discSelected.indexOf(m);
+        if (i >= 0) { if (discSelected.length > 1) discSelected.splice(i, 1); } else discSelected.push(m);
+        discTiles.forEach(function (x) { x.setAttribute("aria-pressed", discSelected.indexOf(x.dataset.metric) >= 0 ? "true" : "false"); });
+        drawDiscover();
+        drawDiscoverTable(selectedTab("discover") || "page");
+      });
+    });
+    watch(discHost, drawDiscover);
+    var DNAMES = { page: "Top pages", country: "Country", date: "Date" };
+    var drawDiscoverTable = function (dim) {
+      var t = disc.tables[dim];
+      var cols = [];
+      ["clicks", "impressions", "ctr"].filter(function (m) { return discSelected.indexOf(m) >= 0; }).forEach(function (m) {
+        var kind = METRICS[m].kind;
+        cols.push({ key: m, label: METRICS[m].label, kind: kind });
+        if (discPrev && dim !== "country") {
+          cols.push({ key: m + "_prev", label: METRICS[m].label + " before", kind: kind, cls: "gsc-table__prev",
+            get: function (r) { return r.prev ? r.prev[m] : null; } });
+        }
+      });
+      renderTable({
+        host: document.getElementById("gsc-discover-table"),
+        columns: [{ key: "label_or_key", label: DNAMES[dim], name: true, get: function (r) { return r.label || r.key; },
+          render: nameCell(dim) }].concat(cols),
+        rows: t.rows, sort: dim === "date" ? "label_or_key" : "clicks", dir: "desc",
+        onRow: dim === "date" ? null : function (r) { return withFilter(dim, r.key) + "#discover"; },
+        empty: "No Discover traffic in this range."
+      });
+    };
+    tabs("discover", drawDiscoverTable);
+    drawDiscoverTable("page");
   }
 })();

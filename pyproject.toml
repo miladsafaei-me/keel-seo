@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keel-seo"
-version = "0.46.0"
+version = "0.47.0"
 description = "Keel SEO - reusable Landing Registry, sitemap, noindex-by-default gate, intent registry, critical-CSS engine, a complete Google Search Console API client (Search Analytics, URL Inspection, Indexing, Sitemaps, Sites), and an autocomplete-only keyword-universe crawler with lexical clustering, a Google Play keyword-gap finder, and a site audit engine (crawl plus Search Console into per-URL facts)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,6 +31,10 @@ proxies = [
 # JSON, CSV and Markdown are always written, so a missing openpyxl costs the
 # workbook and nothing else.
 xlsx = ["openpyxl>=3.0"]
+# The Search Console report's monthly client PDF (keel_seo.gsc.report_pdf). WeasyPrint
+# also needs Pango on the host: apt install libpango-1.0-0 libpangoft2-1.0-0
+# libharfbuzz-subset0. Without it the report still works; only the PDF answers 503.
+pdf = ["weasyprint>=65"]
 # The site audit engine (keel_seo.audit) parses crawled HTML with lxml. It also
 # needs the gsc and proxies extras: install keel-seo[gsc,proxies,audit].
 audit = ["lxml>=5.0", "openpyxl>=3.0"]

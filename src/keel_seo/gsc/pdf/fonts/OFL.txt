@@ -1,0 +1,6 @@
+Google Sans (Copyright 2025 The Google Sans Project Authors, github.com/googlefonts/googlesans)
+and Roboto (Copyright 2011 The Roboto Project Authors, github.com/googlefonts/roboto-classic)
+are licensed under the SIL Open Font License, Version 1.1: https://openfontlicense.org
+These files are Latin subsets made with fontTools for the report PDF.
+Vazirmatn (Copyright The Vazirmatn Project Authors, github.com/rastikerdar/vazirmatn), Arabic-script
+subset, static 400 and 500 instances made with fontTools; SIL Open Font License, Version 1.1.

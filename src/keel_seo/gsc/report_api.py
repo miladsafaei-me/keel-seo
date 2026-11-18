@@ -32,7 +32,7 @@ RETRY_STATUSES = (429, 500, 502, 503, 504)
 MAX_RETRIES = 4
 WORKERS = 6
 # Bump when the payload shape changes, so a deploy never serves an old-shape entry.
-CACHE_VER = "r1"
+CACHE_VER = "r2"
 CACHE_TTL = 6 * 3600
 FRESHNESS_TTL = 3600
 
@@ -179,8 +179,10 @@ def summary(prop: dict, *, today: "dt.date | None" = None) -> dict:
 def build_report(prop: dict, *, range_key: str = R.DEFAULT_RANGE, start: "str | None" = None,
                  end: "str | None" = None, compare: str = R.DEFAULT_COMPARE,
                  search_type: str = "web", filters: "dict | None" = None,
-                 today: "dt.date | None" = None) -> dict:
-    """The whole report payload for one property and one set of choices."""
+                 today: "dt.date | None" = None, compare_span: "tuple | None" = None) -> dict:
+    """The whole report payload for one property and one set of choices.
+    ``compare_span`` (start, end) replaces the comparison period with an explicit one
+    of any length, as the monthly report's previous calendar month."""
     today = today or dt.date.today()
     search_type = search_type if search_type in R.SEARCH_TYPE_LABELS else "web"
     filters = {k: v for k, v in (filters or {}).items() if k in R.FILTER_DIMENSIONS and v.get("value")}
@@ -188,12 +190,16 @@ def build_report(prop: dict, *, range_key: str = R.DEFAULT_RANGE, start: "str | 
     last = fresh["last"]
     current = R.resolve_range(range_key, last, today, start, end)
     comp = R.resolve_compare(compare, current, today)
+    if compare_span:
+        ps_, pe_ = compare_span
+        comp = {"mode": "span", "label": f"{ps_:%B %Y}" if ps_.day == 1 else R.fmt_span(ps_, pe_),
+                "available": ps_ >= R.earliest_date(today), "start": ps_, "end": pe_, "days": (pe_ - ps_).days + 1}
     with_prev = bool(comp and comp.get("available"))
 
     flt_key = "|".join(f"{k}:{v.get('op')}:{v['value']}" for k, v in sorted(filters.items()))
     cache = _cache()
     ckey = (f"gscreport:{CACHE_VER}:{prop['site']}:{_generation(prop['site'])}:{current['start']}:{current['end']}:"
-            f"{comp['mode'] if comp else 'none'}:{search_type}:{flt_key}:{last}")
+            f"{comp['mode'] if comp else 'none'}:{comp.get('start', '') if comp else ''}:{search_type}:{flt_key}:{last}")
     if len(ckey) > 230:
         import hashlib
 
@@ -210,6 +216,7 @@ def build_report(prop: dict, *, range_key: str = R.DEFAULT_RANGE, start: "str | 
         "date": (s, e, ["date"]), "query": (s, e, ["query"]), "page": (s, e, ["page"]),
         "country": (s, e, ["country"]), "device": (s, e, ["device"]),
         "query_page": (qp_start, e, ["query", "page"]),
+        "page_device": (qp_start, e, ["page", "device"]),
     }
     if not flt:
         jobs["appearance"] = (s, e, ["searchAppearance"])
@@ -220,9 +227,19 @@ def build_report(prop: dict, *, range_key: str = R.DEFAULT_RANGE, start: "str | 
         if not flt:
             jobs["prev_appearance"] = (ps, pe, ["searchAppearance"])
 
+    # Discover has no query or device dimension, so either filter leaves it out.
+    discover_on = "query" not in filters and "device" not in filters
+    if discover_on:
+        for dim in ("date", "page", "country"):
+            jobs["discover_" + dim] = (s, e, [dim])
+        if with_prev:
+            for dim in ("date", "page"):
+                jobs["discover_prev_" + dim] = (comp["start"], comp["end"], [dim])
+
     def run(item):
         name, (a, b, dims) = item
-        return name, query(prop, a, b, dims, search_type=search_type, filters=flt)["rows"]
+        stype = "discover" if name.startswith("discover") else search_type
+        return name, query(prop, a, b, dims, search_type=stype, filters=flt)["rows"]
 
     started = time.monotonic()
     with ThreadPoolExecutor(WORKERS) as pool:
@@ -259,6 +276,9 @@ def build_report(prop: dict, *, range_key: str = R.DEFAULT_RANGE, start: "str | 
     nl = R.new_and_lost(got["query"], prev("query"))
     history_rows = got["history"]
 
+    discover = _discover(got, current, comp, with_prev) if discover_on else {
+        "available": False, "reason": "Discover reports no queries or devices, so a query or device filter leaves it out."}
+
     payload = {
         "site": prop["site"],
         "range": {**current, "start": current["start"].isoformat(), "end": current["end"].isoformat(),
@@ -290,6 +310,9 @@ def build_report(prop: dict, *, range_key: str = R.DEFAULT_RANGE, start: "str | 
         "min_impressions": R.min_impressions(current["days"]),
         "movers": {"query": R.movers(got["query"], prev("query")), "page": R.movers(got["page"], prev("page"))},
         "sections": R.sections(got["page"], prev("page")),
+        "devices": R.device_split(got["device"], prev("device")),
+        "device_gap": R.device_gap(got["page_device"], current["days"]),
+        "discover": discover,
         "history": R.weekly(history_rows),
         "events": R.events(history_rows, last),
         "sitemaps": got["sitemaps"],
@@ -301,15 +324,36 @@ def build_report(prop: dict, *, range_key: str = R.DEFAULT_RANGE, start: "str | 
     return payload
 
 
+def _discover(got: dict, current: dict, comp: "dict | None", with_prev: bool) -> dict:
+    """Google Discover for the same days: totals, the daily line and its tables."""
+    rows = got.get("discover_date") or []
+    if not any(int(r.get("impressions", 0)) for r in rows + (got.get("discover_prev_date") or [])):
+        return {"available": False, "reason": "No Discover traffic in this range."}
+    totals = R.totals_of(rows)
+    prev_totals = R.totals_of(got["discover_prev_date"]) if with_prev else None
+    series = R.daily_series(rows, got.get("discover_prev_date") or [], current, comp)
+    prevf = (lambda n: got.get("discover_prev_" + n)) if with_prev else (lambda n: None)
+    tables = {
+        "page": R.table(got.get("discover_page") or [], prevf("page")),
+        "country": R.table(got.get("discover_country") or [], None),
+        "date": R.date_table(series),
+    }
+    _label_rows(tables)
+    ch = R.changes(totals, prev_totals)
+    ch.pop("position", None)
+    return {"available": True, "totals": totals, "prev_totals": prev_totals, "changes": ch,
+            "series": series, "tables": tables}
+
+
 def _label_rows(tables: dict) -> None:
     """Readable names for coded keys, as Search Console shows them."""
     from .countries import name
 
     for row in tables["country"]["rows"]:
         row["label"] = name(row["key"])
-    for row in tables["device"]["rows"]:
+    for row in (tables.get("device") or {}).get("rows", []):
         row["label"] = row["key"].capitalize()
-    for row in (tables.get("appearance") or {}).get("rows", []):
+    for row in ((tables.get("appearance") or {}).get("rows", [])):
         row["label"] = row["key"].replace("_", " ").capitalize()
 
 
@@ -333,3 +377,47 @@ def forget(prop: dict) -> None:
     cache = _cache()
     if cache:
         cache.set(f"gscreport:gen:{prop['site']}", _generation(prop["site"]) + 1, None)
+
+
+def monthly(prop: dict, month: "str | None" = None, *, today: "dt.date | None" = None) -> dict:
+    """The client's monthly report: one complete calendar month against the month
+    before (compared per day, since months differ in length) and the same month a
+    year earlier, plus the last thirteen months and the month in plain sentences."""
+    today = today or dt.date.today()
+    last = last_complete_day(prop, today)["last"]
+    months = R.complete_months(last, today)
+    if not months:
+        raise ReportError("Search Console has no complete month for this property yet.")
+    keys = [k for k, _label in months]
+    month = month if month in keys else keys[0]
+    start, end = R.month_bounds(month)
+    prev_start = R.add_months(start, -1)
+    prev_end = start - dt.timedelta(days=1)
+    p = dict(build_report(prop, range_key="custom", start=start.isoformat(), end=end.isoformat(),
+                          compare_span=(prev_start, prev_end), today=today))
+    days, prev_days = (end - start).days + 1, (prev_end - prev_start).days + 1
+    p["changes"] = R.per_day_changes(p["totals"], p["prev_totals"], days, prev_days)
+    disc = p.get("discover") or {}
+    if disc.get("available") and disc.get("prev_totals"):
+        disc = dict(disc)
+        disc["changes"] = R.per_day_changes(disc["totals"], disc["prev_totals"], days, prev_days)
+        disc["changes"].pop("position", None)
+        p["discover"] = disc
+    h = history(prop, today=today)
+    year_start = R.add_months(start, -12)
+    year_end = R.month_bounds(f"{year_start:%Y-%m}")[1]
+    p["year_label"] = f"{year_start:%B %Y}"
+    p["year_start"] = year_start.isoformat()
+    p["year_totals"], p["year_changes"] = None, {}
+    if year_start >= R.earliest_date(today):
+        yt = R.totals_of(R.in_period(h["rows"], year_start, year_end))
+        if yt["impressions"]:
+            p["year_totals"] = yt
+            p["year_changes"] = R.per_day_changes(p["totals"], yt, days, (year_end - year_start).days + 1)
+    p["months_trend"] = R.monthly_totals(h["rows"], 13, last)
+    p["month"] = month
+    p["month_label"] = f"{start:%B %Y}"
+    p["month_events"] = [e for e in p.get("events") or [] if start.isoformat() <= e["date"] <= end.isoformat()]
+    p["findings"] = R.findings(p)
+    p["months"] = months
+    return p

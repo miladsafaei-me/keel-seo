@@ -18,6 +18,7 @@ business logic through config hooks documented in :mod:`keel_seo.config`:
 """
 from __future__ import annotations
 
+import datetime as dt
 import logging
 
 from django.conf import settings
@@ -91,6 +92,8 @@ class SearchConsoleView(View):
                 raise Http404("No such Search Console property")
         if config.seo_setting("gsc_dashboard") == "classic":
             return self._classic(request, prop)
+        if request.GET.get("download") == "pdf":
+            return monthly_pdf(request, prop)
         ctx = report_context(request, prop)
         ctx["gsc_base_template"] = config.seo_setting("gsc_base_template")
         return render(request, "keel_seo/gsc/report.html", ctx)
@@ -107,6 +110,27 @@ class SearchConsoleView(View):
         ctx["sc_standalone_css"] = config.seo_setting("gsc_standalone_css")
         ctx["sc_site_base"] = _property_base(prop["site"]) if prop else _site_base(request)
         return render(request, "keel_seo/gsc/search_console.html", ctx)
+
+
+def monthly_pdf(request, prop: "dict | None"):
+    """The client's monthly report as a PDF download (``?download=pdf&month=YYYY-MM``)."""
+    from django.http import HttpResponse
+
+    from . import report_api, report_pdf
+
+    target = report_property(prop)
+    try:
+        payload = report_api.monthly(target, request.GET.get("month"))
+        pdf = report_pdf.render(payload, target, config.seo_setting("gsc_report_brand"))
+    except report_pdf.PdfUnavailable as exc:
+        return HttpResponse(str(exc), status=503, content_type="text/plain; charset=utf-8")
+    except Exception as exc:  # noqa: BLE001: a failed pull becomes a readable answer
+        logger.exception("gsc monthly pdf failed for %s", target.get("site"))
+        return HttpResponse(f"The monthly report could not be built: {str(exc)[:300]}", status=502,
+                            content_type="text/plain; charset=utf-8")
+    response = HttpResponse(pdf, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{report_pdf.filename(target, payload["month"])}"'
+    return response
 
 
 # The old dashboard's ?window= values, so a saved link still opens the nearest range.
@@ -208,8 +232,19 @@ def report_context(request, prop: "dict | None") -> dict:
     except Exception as exc:  # noqa: BLE001: a failed pull becomes the page's message
         _logging.getLogger(__name__).exception("gsc report failed for %s", target.get("site"))
         error = str(exc)[:400]
-    tiles, alerts, notes = [], [], []
+    tiles, alerts, notes, discover_tiles, devices, months = [], [], [], [], [], []
     if data:
+        disc = data.get("discover") or {}
+        if disc.get("available"):
+            for key, label, kind in REPORT_METRICS[:3]:
+                discover_tiles.append({
+                    "key": key, "label": label, "value": R.compact(disc["totals"].get(key), kind),
+                    "prev": R.compact(disc["prev_totals"].get(key), kind) if disc.get("prev_totals") else None,
+                    "change": _change_text((disc.get("changes") or {}).get(key))})
+        devices = [{**d, "change": _change_text((d.get("changes") or {}).get("clicks"))}
+                   for d in data.get("devices") or []]
+        last = R.parse_date(data["last_complete"])
+        months = R.complete_months(last, dt.date.today()) if last else []
         prev = data.get("prev_totals")
         for key, label, kind in REPORT_METRICS:
             tiles.append({"key": key, "label": label,
@@ -225,6 +260,9 @@ def report_context(request, prop: "dict | None") -> dict:
         "page_pretitle": "Search Console",
         "page_title": target.get("label") or target["site"],
         "tiles": tiles,
+        "discover_tiles": discover_tiles,
+        "device_rows": devices,
+        "months": months,
         "alerts": alerts,
         "notes": notes,
         "active_filters": active_filters,

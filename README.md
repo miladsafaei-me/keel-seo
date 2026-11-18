@@ -507,6 +507,27 @@ Alpine) and follows the host's `.dark` class. `report_api.summary(prop)` gives a
 property card (last 28 complete days, its daily line, recent breaks) by the same
 rules, with `static/keel_seo/gsc/spark.js` for the line.
 
+Since v0.47.0 the report also has:
+
+- **A Discover view.** A second tab beside Search results reads the same days with
+  `type=discover`: totals, the daily line, and pages, countries and dates (Discover
+  has no query, position or device dimension, so a query or device filter leaves it
+  out and the view says so).
+- **Mobile and desktop.** Each device's share, CTR, position and change, then the
+  pages that rank at least 3 places lower on mobile, or earn under half their desktop
+  click rate at a similar position, sorted by the clicks that gap costs. The
+  page+device pull covers the last 28 days of the range, like query+page.
+- **A monthly client PDF.** `?download=pdf&month=YYYY-MM` (a "Monthly report (PDF)"
+  button and a month picker on the page) returns one complete calendar month against
+  the month before and the same month a year earlier, compared per day because months
+  differ in length; the month in plain sentences; the daily line and the last 13
+  months with their values printed; top queries and pages; countries and devices;
+  pages weaker on mobile; Discover; opportunities; the brand split and notes about the
+  data. `report_api.monthly()` builds it, `report_pdf.render()` prints it with
+  WeasyPrint (the `[pdf]` extra plus Pango on the host) in Google Sans, Roboto and
+  Vazirmatn (Latin and Arabic-script subsets in `gsc/pdf/fonts`, SIL OFL). Who
+  prepared it comes from `KEEL_SEO["gsc_report_brand"]` (`{"name", "logo"}`).
+
 `KEEL_SEO["gsc_dashboard"] = "classic"` keeps the older snapshot-and-insights
 dashboard below, for a host that still curates insights or queues content from it.
 

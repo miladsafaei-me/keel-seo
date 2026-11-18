@@ -167,6 +167,11 @@
   color: var(--gsc-text);
 }
 .gsc-head__updated { margin: 0; font-size: var(--gsc-size-small); color: var(--gsc-text-2); }
+.gsc-head__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gsc-space-1) var(--gsc-space-4); }
+.gsc-views { padding: 0; border-bottom-color: var(--gsc-border); }
+.gsc-views .gsc-tab { padding: 0 var(--gsc-space-5); }
+.gsc-view { display: flex; flex-direction: column; gap: var(--gsc-space-4); min-width: 0; }
+.gsc-view[hidden] { display: none; }
 
 /* ---- filter chips ---- */
 
@@ -310,6 +315,7 @@
 /* ---- metric tiles ---- */
 
 .gsc-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: var(--gsc-hairline) solid var(--gsc-divider); }
+.gsc-tiles--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .gsc-tile {
   --gsc-tile-color: var(--gsc-clicks);
   display: flex;
@@ -635,6 +641,8 @@
 
 .gsc-dialog {
   width: min(var(--gsc-dialog-width), calc(100vw - 2 * var(--gsc-space-4)));
+  margin: auto;
+  max-height: calc(100vh - 2 * var(--gsc-space-4));
   padding: 0;
   border: 0;
   border-radius: var(--gsc-radius-card);
@@ -648,6 +656,8 @@
 .gsc-dialog__form { display: flex; flex-direction: column; }
 .gsc-dialog__title { margin: 0; padding: var(--gsc-space-6) var(--gsc-space-6) var(--gsc-space-4); font-family: var(--gsc-font-display); font-size: var(--gsc-size-title); line-height: var(--gsc-line-title); font-weight: var(--gsc-weight-regular); }
 .gsc-dialog__form > .gsc-field { margin: 0 var(--gsc-space-6) var(--gsc-space-4); }
+.gsc-dialog__text { margin: 0 var(--gsc-space-6) var(--gsc-space-4); color: var(--gsc-text-2); }
+.gsc-dialog__hint { font-size: var(--gsc-size-small); margin-bottom: 0; }
 .gsc-dialog__panel { margin: 0; padding: var(--gsc-space-3) var(--gsc-space-6); border: 0; display: grid; gap: var(--gsc-space-1); }
 .gsc-dialog__dates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gsc-space-3); margin-top: var(--gsc-space-2); }
 .gsc-dialog__actions { display: flex; justify-content: flex-end; gap: var(--gsc-space-2); padding: var(--gsc-space-4) var(--gsc-space-4) var(--gsc-space-4); }
@@ -708,6 +718,7 @@
 @media (max-width: 767px) {
   .gsc-report { --gsc-size-tile: 1.5rem; --gsc-tile-min: 96px; --gsc-chart-height: 220px; }
   .gsc-tiles,
+  .gsc-tiles--three,
   .gsc-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .gsc-tile:nth-child(2n),
   .gsc-summary__item:nth-child(2n) { border-right: 0; }

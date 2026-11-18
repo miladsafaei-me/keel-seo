@@ -67,6 +67,7 @@ class FigureTests(SimpleTestCase):
 
     def test_compact_matches_search_console(self):
         self.assertEqual([R.compact(v) for v in (67, 1727, 15803, 348106319)], ["67", "1.73K", "15.8K", "348M"])
+        self.assertEqual([R.compact(v) for v in (100000, 150000, 2000, 10500)], ["100K", "150K", "2K", "10.5K"])
         self.assertEqual((R.compact(3.88, "ctr"), R.compact(15.84, "position")), ("3.9%", "15.8"))
 
 
@@ -171,3 +172,49 @@ class ReportPageTests(TestCase):
         for part in ("gsc-performance", "gsc-breakdown", "gsc-history", "gsc-opportunities",
                      "gsc-brand", "gsc-ranking", "gsc-sections", "gsc-sitemaps", "gsc-notes", "gsc-report-data"):
             self.assertIn(part, html)
+
+
+class DeviceAndMonthTests(SimpleTestCase):
+    def test_device_gap_finds_pages_weaker_on_mobile(self):
+        rows = [
+            {"keys": ["https://x.com/a", "MOBILE"], "clicks": 1, "impressions": 200, "position": 9.0},
+            {"keys": ["https://x.com/a", "DESKTOP"], "clicks": 20, "impressions": 200, "position": 4.0},
+            {"keys": ["https://x.com/b", "MOBILE"], "clicks": 20, "impressions": 200, "position": 4.0},
+            {"keys": ["https://x.com/b", "DESKTOP"], "clicks": 20, "impressions": 200, "position": 4.0},
+        ]
+        gap = R.device_gap(rows, 28)
+        self.assertEqual([g["key"] for g in gap], ["https://x.com/a"])
+        self.assertEqual((gap[0]["places"], gap[0]["missed"]), (5.0, 19))
+
+    def test_complete_months_stop_at_the_last_finished_day(self):
+        months = R.complete_months(dt.date(2026, 11, 16), TODAY)
+        self.assertEqual(months[0], ("2026-10", "October 2026"))
+        self.assertEqual(R.complete_months(dt.date(2026, 10, 31), TODAY)[0][0], "2026-10")
+
+    def test_months_of_different_length_compare_per_day(self):
+        ch = R.per_day_changes({"clicks": 310, "impressions": 3100, "ctr": 10.0, "position": 5.0},
+                               {"clicks": 300, "impressions": 3000, "ctr": 10.0, "position": 5.0}, 31, 30)
+        self.assertTrue(ch["clicks"]["flat"])
+
+
+class PdfTests(TestCase):
+    def test_the_monthly_report_prints(self):
+        try:
+            import weasyprint  # noqa: F401
+        except Exception:  # noqa: BLE001
+            self.skipTest("weasyprint is not installed")
+        from unittest import mock
+
+        from django.test import override_settings
+
+        from keel_seo.gsc import report_api, report_pdf
+
+        prop = {"site": "sc-domain:acme.com", "credentials": "/none.json", "label": "Acme", "brands": [("Acme", "acme")]}
+        with override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.dummy.DummyCache"}}), \
+                mock.patch.object(report_api, "query", side_effect=ReportPageTests.fake_query.__get__(ReportPageTests())), \
+                mock.patch.object(report_api, "_call", return_value={"sitemap": []}):
+            payload = report_api.monthly(prop, today=dt.date(2026, 11, 19))
+            pdf = report_pdf.render(payload, prop, {"name": "Agency"})
+        self.assertEqual(payload["month"], "2026-10")
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        self.assertEqual(report_pdf.filename(prop, "2026-10"), "acme-search-console-2026-10.pdf")
