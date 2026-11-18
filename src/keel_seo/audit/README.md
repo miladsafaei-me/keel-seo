@@ -23,6 +23,8 @@ python -m keel_seo.audit facts <workspace> sql "<SELECT ...>"
 python -m keel_seo.audit findings <workspace> validate [module]
 python -m keel_seo.audit findings <workspace> reconcile
 python -m keel_seo.audit findings <workspace> export
+python -m keel_seo.audit event <workspace> <YYYY-MM-DD>   # a dated break: 14 days before against 14 after
+python -m keel_seo.audit report-data <workspace>          # every number the report shows, checklist statuses included
 ```
 
 ## What each stage does

@@ -32,6 +32,10 @@ def main(argv=None) -> int:
     facts.add_argument("--limit", type=int, default=40)
     serp = add("serp-plan", "list the priority queries for a SERP lookup")
     serp.add_argument("--max", type=int, default=25)
+    event = add("event", "measure a dated step change: the days before against the days after")
+    event.add_argument("date", help="the day the line broke, YYYY-MM-DD")
+    event.add_argument("--days", type=int, default=14)
+    add("report-data", "write every number the report shows into report/data.json")
     findings = add("findings", "validate agent findings and reconcile them per URL")
     findings.add_argument("action", choices=("validate", "reconcile", "export"))
     findings.add_argument("module", nargs="?", default="")
@@ -62,6 +66,12 @@ def main(argv=None) -> int:
     elif args.command == "facts":
         from . import facts as facts_module
         result = facts_module.show(workspace, args.module, args.target, limit=args.limit)
+    elif args.command == "event":
+        from . import event as event_module
+        result = event_module.run(workspace, args.date, days=args.days)
+    elif args.command == "report-data":
+        from . import reportdata
+        result = reportdata.run(workspace)
     elif args.command == "serp-plan":
         from . import facts as facts_module
         result = facts_module.serp_plan(workspace, maximum=args.max)
