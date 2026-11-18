@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from urllib.parse import urlparse
 
 from . import MODULES
 from .store import Workspace
@@ -112,6 +113,74 @@ def _demand(urls: list) -> dict:
     return demand
 
 
+BUCKETS = ((3.5, "1-3"), (10.5, "4-10"), (20.5, "11-20"), (50.5, "21-50"), (float("inf"), "51+"))
+
+
+def _is_brand(query: str, brand: list) -> bool:
+    return any(term in query.lower() for term in brand)
+
+
+def _bucket(position: float) -> str:
+    return next(label for top, label in BUCKETS if position < top)
+
+
+def _queries(conn, brand: list) -> dict:
+    """Brand against non-brand query totals, and non-brand demand by result position, per 91-day window.
+
+    Query rows are anonymised by Google below a privacy threshold, so these totals are smaller
+    than the page totals; read them as shares, not as the site's whole traffic.
+    """
+    out = {}
+    for span in ("3m", "prev3m"):
+        split = {side: {"clicks": 0, "impressions": 0, "queries": 0} for side in ("brand", "non_brand")}
+        positions = {label: {"clicks": 0, "impressions": 0, "queries": 0} for _top, label in BUCKETS}
+        for key, clicks, impressions, position in conn.execute(
+                "SELECT key, clicks, impressions, position FROM gsc_dim WHERE dim='query' AND span=?", (span,)):
+            side = "brand" if _is_brand(key, brand) else "non_brand"
+            for target in (split[side], *(() if side == "brand" else (positions[_bucket(position or 99)],))):
+                target["clicks"] += round(clicks or 0)
+                target["impressions"] += round(impressions or 0)
+                target["queries"] += 1
+        out[span] = {"split": split, "positions": positions}
+    return out
+
+
+def _near_page_one(conn, brand: list, limit: int = 12) -> list:
+    """Non-brand queries of the last 91 days that sit between position 4 and 20, most impressions first."""
+    out = []
+    rows = conn.execute("SELECT key, clicks, impressions, position FROM gsc_dim WHERE dim='query' AND span='3m' "
+                        "AND position >= 3.5 AND position < 20.5 ORDER BY impressions DESC").fetchall()
+    for key, clicks, impressions, position in rows:
+        if _is_brand(key, brand):
+            continue
+        page = conn.execute("SELECT url FROM gsc_query_page WHERE span='3m' AND query=? ORDER BY impressions DESC LIMIT 1",
+                            (key,)).fetchone()
+        family = conn.execute("SELECT family FROM inventory WHERE url=?", (page[0],)).fetchone() if page else None
+        out.append({"query": key, "clicks": round(clicks or 0), "impressions": round(impressions or 0),
+                    "position": round(position, 1), "page": page[0] if page else "", "family": family[0] if family else ""})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _serp_holders(workspace: Workspace, site: str, limit: int = 10) -> dict:
+    """How many of the collected result snapshots each domain appears in (top 10), the audited site included."""
+    path = workspace.data / "serp.jsonl"
+    if not path.exists():
+        return {"queries": 0, "domains": [], "own": 0, "engine": ""}
+    own = urlparse(site).netloc.removeprefix("www.")
+    counts, queries, engine = Counter(), 0, ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        queries += 1
+        engine = engine or row.get("engine", "")
+        counts.update({urlparse(item.get("url", "")).netloc.removeprefix("www.") for item in row.get("results", [])[:10]} - {""})
+    return {"queries": queries, "engine": engine, "own": counts.get(own, 0),
+            "domains": [{"domain": domain, "queries": count} for domain, count in counts.most_common(limit + 1) if domain != own][:limit]}
+
+
 def run(workspace: Workspace) -> dict:
     facts = {name: json.loads((workspace.facts / f"{name}.json").read_text(encoding="utf-8"))
              for name in ("overview", "technical", "performance")}
@@ -134,7 +203,7 @@ def run(workspace: Workspace) -> dict:
             "findings": [{key: finding.get(key) for key in (
                 "id", "severity", "confidence", "effort", "action", "original_action", "pages", "url_change",
                 "verification", "title", "evidence", "recommendation", "expected_effect", "depends_on",
-                "merge_into", "strategist_note")} | {"demand": demand.get(finding["id"], empty)}
+                "merge_into", "strategist_note", "original_severity")} | {"demand": demand.get(finding["id"], empty)}
                 for finding in findings],
         }
     proposals: dict = {}
@@ -173,6 +242,9 @@ def run(workspace: Workspace) -> dict:
         "summary": {key: reconciled["summary"][key] for key in ("findings_kept", "findings_by_severity", "url_actions")},
         "url_proposals": sorted(proposals.values(), key=lambda group: -group["pages"]),
         "events": events,
+        "growth": {"queries": _queries(conn, [term.lower() for term in overview["project"].get("brand_terms", [])]),
+                   "near_page_one": _near_page_one(conn, [term.lower() for term in overview["project"].get("brand_terms", [])]),
+                   "serp_holders": _serp_holders(workspace, overview["project"]["site"])},
         "data_gaps": overview["data_gaps"],
     }
     conn.close()

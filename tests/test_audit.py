@@ -136,6 +136,19 @@ class ReportDataTests(unittest.TestCase):
         conn.executemany("INSERT INTO gsc_day VALUES (?, 1, 10, 5)", [(day,) for day in days])
         self.assertEqual(reportdata._weekly(conn), [{"week": "2026-10-05", "clicks": 7, "impressions": 70}])
 
+    def test_queries_split_brand_and_bucket_positions(self):
+        import sqlite3
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE gsc_dim (dim TEXT, key TEXT, span TEXT, clicks REAL, impressions REAL, position REAL)")
+        conn.executemany("INSERT INTO gsc_dim VALUES ('query', ?, '3m', ?, ?, ?)",
+                         [("acme reviews", 5, 50, 1.2), ("best broker", 1, 100, 7.4), ("broker fees", 0, 40, 33.0)])
+        result = reportdata._queries(conn, ["acme"])["3m"]
+        self.assertEqual(result["split"]["brand"], {"clicks": 5, "impressions": 50, "queries": 1})
+        self.assertEqual(result["split"]["non_brand"]["impressions"], 140)
+        self.assertEqual(result["positions"]["4-10"]["impressions"], 100)
+        self.assertEqual(result["positions"]["21-50"]["queries"], 1)
+        self.assertEqual(result["positions"]["1-3"]["impressions"], 0)
+
     def test_demand_sums_per_finding(self):
         urls = [{"findings": ["a-01", "b-02"], "impr_3m": 10.0, "clicks_3m": 1.0},
                 {"findings": ["a-01"], "impr_3m": 0.0, "clicks_3m": 0.0}]

@@ -5,7 +5,7 @@ the schema and resolves each finding's targets to real URLs. ``reconcile``
 drops what the verifier refuted, applies the strategist's decisions, leaves one
 action per URL and lists every conflict and every risky removal. Decisions
 live in ``findings/decisions.json``: ``{"findings": {"<id>": {"action": "drop"
-or a new action, "reason": ...}}, "urls": {"<url>": {"action": ...,
+or a new action, "severity": an optional new severity, "reason": ...}}, "urls": {"<url>": {"action": ...,
 "merge_into": ..., "reason": ...}}}``. ``export``
 writes the action workbook for the team that will do the work.
 """
@@ -145,11 +145,15 @@ def reconcile(workspace: Workspace) -> dict:
             dropped.append({"id": finding["id"], "reason": "strategist: " + ruling.get("reason", "")})
             continue
         if ruling:
-            finding["original_action"] = finding["action"]
-            finding["action"] = ruling["action"]
             finding["strategist_note"] = ruling.get("reason", "")
-            if ruling["action"] not in (*REMOVING, "create"):
-                finding["url_change"] = False
+            if ruling.get("action"):
+                finding["original_action"] = finding["action"]
+                finding["action"] = ruling["action"]
+                if ruling["action"] not in (*REMOVING, "create"):
+                    finding["url_change"] = False
+            if ruling.get("severity") in SEVERITIES and ruling["severity"] != finding["severity"]:
+                finding["original_severity"] = finding["severity"]
+                finding["severity"] = ruling["severity"]
         if check.get("verdict") == "weakened":
             finding["confidence"] = "low"
         finding["verification"] = check.get("verdict", "not checked")

@@ -24,7 +24,7 @@ python -m keel_seo.audit findings <workspace> validate [module]
 python -m keel_seo.audit findings <workspace> reconcile
 python -m keel_seo.audit findings <workspace> export
 python -m keel_seo.audit event <workspace> <YYYY-MM-DD>   # a dated break: 14 days before against 14 after
-python -m keel_seo.audit report-data <workspace>          # every number the report shows, checklist statuses included
+python -m keel_seo.audit report-data <workspace>          # every number the report shows: checklist statuses, weekly line, brand split, demand by position, queries near page one, result holders
 ```
 
 ## What each stage does
@@ -35,7 +35,7 @@ python -m keel_seo.audit report-data <workspace>          # every number the rep
 | `gscdata.py` | Six spans (28 days and the 28 before, 91 days, the 91 before and the same 91 a year earlier, 16 months), query-by-page rows, monthly cuts per page, daily totals, and country, device, appearance and query totals. |
 | `analyze.py` | Assigns page families from URL shapes, computes inlinks, depth and internal rank, joins everything into `inventory` (one row per URL) and writes one fact file per module with family summaries and candidate lists. |
 | `facts.py` | Narrow reads for an agent: a fact file, one page, one family, or one read-only SELECT with a row cap. |
-| `findings.py` | Validates an agent's findings file, resolves its targets (URL list, family with a filter, or the site), applies the verifier's verdicts and the strategist's decisions, leaves one action per URL, and lists conflicts and risky removals. Exports CSV and a workbook. |
+| `findings.py` | Validates an agent's findings file, resolves its targets (URL list, family with a filter, or the site), applies the verifier's verdicts and the strategist's decisions (a new action, or a severity weighed against the site's size), leaves one action per URL, and lists conflicts and risky removals. Exports CSV and a workbook. |
 | `psi.py` | Field and lab numbers from Google's PageSpeed API for the top page of each family. |
 
 ## The workspace
