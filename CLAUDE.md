@@ -61,10 +61,14 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
   `indexing` for the Indexing API, `sitemaps`, `sites`, `check` for the preflight, the
   `UrlInspection` + `IndexingSubmission` state store, and the four
   `keel_seo_gsc_*` management commands), and (since v0.4.0) the `/search-console`
-  dashboard UI
-  (`gsc/{build,live,dashboard,views,urls}.py` + `templates/keel_seo/gsc/` +
-  `static/keel_seo/gsc/`): pure data transforms, the live-API path, context
-  building/insight dismissals, and the routes. Mount with
+  dashboard UI. Since v0.45.0 that is **the Search Console report**
+  (`gsc/report.py` pure transforms, `gsc/report_api.py` fetch, cache and assembly,
+  `templates/keel_seo/gsc/report.html`, `static/keel_seo/gsc/report.{css,js}`): one
+  structure for every property, in Search Console's own look. Never add a panel,
+  window or pull that depends on which property it is; a property differs only in its
+  data (site, key, brand names). The older snapshot-and-insights dashboard
+  (`gsc/{build,live,dashboard}.py` + `search_console.html`) stays behind
+  `KEEL_SEO["gsc_dashboard"] = "classic"` for hosts that still curate insights. Mount with
   `include("keel_seo.gsc.urls")`.
 - **Stays in the host (Bucket-0):** the intent *vocabulary* - what a site's entities
   and frames are, and which URL owns which need - because nothing generic can guess it;
@@ -123,6 +127,7 @@ fork of this code.
 | `KEEL_SEO["gsc_queue_list_url_name"]` | `config.gsc_queue_list_url` | none → no link | reverse()-able URL name, no args |
 | `KEEL_SEO["gsc_plan_edit_url_name"]` | `gsc/views.queue` | none → no link | reverse()-able URL name, `args=[pk]` |
 | `KEEL_SEO["gsc_forbidden_redirect"]` | `gsc/views._forbidden` | none → Django 403 | reverse()-able URL name |
+| `KEEL_SEO["gsc_dashboard"]` | `gsc/views.SearchConsoleView` | `"report"` → the one report | `"classic"` keeps the snapshot-and-insights dashboard |
 | `KEEL_SEO["intent_registry_hook"]` | `intent.load_registry` | none → empty registry, nothing enforced | `() -> {"intents": [...], "entity_families": {...}, "guarded_prefixes": [...]}` |
 
 ## Tests

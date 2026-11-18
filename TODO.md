@@ -28,6 +28,18 @@ Guidelines:
   `keel_seo_gsc_inspect --all-indexable --stale-days 30` timer per site once adopted.
 
 ## P2 — Backlog
+
+- [ ] **Move the classic dashboard's host workflows onto the report, then delete it.**
+  Since v0.45.0 every property gets the one report (`gsc/report*.py`, `report.html`);
+  the old snapshot-and-insights page (`gsc/{build,live,dashboard}.py`,
+  `search_console.html`, `search_console.{css,js}`) is served only when a host sets
+  `KEEL_SEO["gsc_dashboard"] = "classic"`. What it still has that the report lacks:
+  curated `gsc_insights.json` cards with dismissals, the dedicated-content candidates
+  and their clustering-queue buttons (`gsc_queue_hook`, keel-content), per-market
+  bars from `query_enrichment.json`, and the URL Inspection coverage accordion.
+  Before a SignalBots-family host bumps past v0.44.x, either set `"classic"` there or
+  port those panels as report panels fed by the host's data (never a per-property
+  structure). Requires: a host that uses them to test against.
 - [ ] Wire the new content-freshness engine (`keel_seo.freshness`, v0.6.0) into consumer
   projects one at a time. Each needs: `KEEL_SEO["freshness_enabled"] = True`, a
   `python manage.py keel_seo_freshness` line added to the deploy one-shot, `{% load

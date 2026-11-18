@@ -115,6 +115,11 @@ key is optional and the defaults make the package work standalone:
         # the SignalBots family's: "binary_options" and None (generic plus its words).
         "gsc_brands": "binary_options",
         "gsc_cluster_qualifiers": None,
+        # Which page /search-console serves. "report" (default) is the one report
+        # every property gets (keel_seo.gsc.report_api). "classic" keeps the older
+        # snapshot-and-insights dashboard for a host that still curates insights or
+        # queues content from it, until that workflow moves onto the report.
+        "gsc_dashboard": "report",
 
         # ---- keel_seo.intent (one query intent, one canonical URL) ----
         # Dotted path to a callable returning this site's intent registry: which
@@ -161,6 +166,7 @@ _DEFAULTS = {
     "gsc_properties": None,
     "gsc_brands": "binary_options",
     "gsc_cluster_qualifiers": None,
+    "gsc_dashboard": "report",
     "intent_registry_hook": None,
     "noindex_paths": (),
     "noindex_paths_robots": "noindex, nofollow",

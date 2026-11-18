@@ -472,7 +472,48 @@ python -m keel_seo.gsc sites add sc-domain:example.com
 `add` registers a property; it does not **verify** it. Verification has no public API
 and stays a one-time browser step per property.
 
+### The Search Console report (`keel_seo.gsc.report` / `.report_api`, since v0.45.0)
+
+`<mount>` and `<mount>/<property>` serve one report, the same for every property
+whatever its size, owner or permission level. It follows Search Console's own
+Performance report (filter chips for search type, date, comparison and filters; the
+four metric tiles over a daily chart; the Queries, Pages, Countries, Devices, Search
+appearance and Dates table) and adds the panels Search Console leaves out: the
+sixteen-month history by week with sudden breaks marked, opportunities (striking
+distance, low click rate against the property's own curve, competing pages, new and
+lost queries), click movers, the brand split with the hidden share, ranking by
+position, site sections (the folder after a locale folder), sitemaps and plain notes
+about the data.
+
+Rules every figure follows: totals come from the `date` dimension; a day on or after
+the API's `firstIncompleteDate` is never counted; the comparison period has exactly
+the current period's length; every panel built from query rows says how much of the
+traffic those rows cover. Each pull is one page capped at 25,000 rows, run side by
+side, so a 70k-clicks-a-day property loads sixteen months in about ten seconds; the
+query+page pull covers the last 28 days of the range. Answers are cached per
+property, choice set and last complete day, for up to six hours.
+
+The reader's choices are query parameters: `range` (`7d`, `28d`, `3m`, `6m`, `12m`,
+`16m`) or `start` + `end`, `compare` (`previous`, `year`, `none`), `type` (`web`,
+`image`, `video`, `news`), and `query`, `page`, `country`, `device`, each with
+`<dim>_op` (`contains`, `notContains`, `equals`). The old `window` values still open
+the nearest range.
+
+A declared property needs `site`, `credentials` and optionally `label` and `brands`
+(a list of `(label, regex)` or a `BRAND_PRESETS` name). The host's own property is
+read from `gsc_site`, `gsc_credentials` and `gsc_brands`. The page brings its own
+stylesheet and script (`static/keel_seo/gsc/report.{css,js}`, no Tailwind, no
+Alpine) and follows the host's `.dark` class. `report_api.summary(prop)` gives a
+property card (last 28 complete days, its daily line, recent breaks) by the same
+rules, with `static/keel_seo/gsc/spark.js` for the line.
+
+`KEEL_SEO["gsc_dashboard"] = "classic"` keeps the older snapshot-and-insights
+dashboard below, for a host that still curates insights or queues content from it.
+
 ### GSC dashboard UI (`keel_seo.gsc.dashboard` / `.views` / `.urls`)
+
+The classic dashboard, served only when `gsc_dashboard` is `"classic"`.
+
 
 A `/search-console` reporting + insights dashboard — keel-seo's first UI surface.
 Renders a per-window snapshot a host's own offline exporter produced (deterministic,

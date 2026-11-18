@@ -1,0 +1,340 @@
+{% extends gsc_base_template %}
+{% load static %}
+{% comment %}
+The Search Console report: one page, one structure, for every property. It follows
+Search Console's own Performance report (filter chips, the four metric tiles over the
+chart, the tabbed breakdown table), then adds the panels Search Console leaves out:
+breaks in the sixteen-month history, opportunities, movers, the brand split, ranking,
+site sections, sitemaps and notes about the data. Charts and tables are drawn by
+report.js from the JSON at the end; everything else renders here.
+{% endcomment %}
+
+{% block title %}{{ page_title }} · Performance{% endblock %}
+
+{% block extra_head %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&family=Roboto:wght@400;500&display=swap">
+<link rel="stylesheet" href="{% static 'keel_seo/gsc/report.css' %}">
+{% endblock %}
+
+{% block breadcrumb %}{% endblock %}
+
+{% block content %}
+<div id="gsc-report" class="gsc-report">
+
+  <header id="gsc-head" class="gsc-head">
+    <div class="gsc-head__titles">
+      <p class="gsc-head__property"><span class="gsc-head__label">{{ rp.label }}</span> <span class="gsc-head__site">{{ rp.site }}</span></p>
+      <h1 class="gsc-head__title">Performance on Search results</h1>
+    </div>
+    {% if report %}<p class="gsc-head__updated">Last update: data through {{ report.last_complete_label }}</p>{% endif %}
+  </header>
+
+  <nav id="gsc-filters" class="gsc-filters" aria-label="Report filters">
+    <button type="button" class="gsc-chip" data-open-dialog="gsc-type-dialog">
+      <span class="gsc-chip__text">Search type: {{ type_label }}</span>
+      <svg class="gsc-chip__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+    </button>
+    <button type="button" class="gsc-chip" data-open-dialog="gsc-date-dialog">
+      <span class="gsc-chip__text">Date: {{ range_label }}{% if report.compare.available %} vs {{ compare_label|lower }}{% endif %}</span>
+      <svg class="gsc-chip__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+    </button>
+    {% for f in active_filters %}
+    <span class="gsc-chip gsc-chip--filter">
+      <button type="button" class="gsc-chip__edit" data-open-filter="{{ f.dim }}" data-op="{{ f.op }}" data-value="{{ f.value }}">{{ f.label }} {{ f.op_label }} {{ f.value }}</button>
+      <a class="gsc-chip__remove" href="{{ f.clear_url }}" aria-label="Remove the {{ f.label|lower }} filter">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </a>
+    </span>
+    {% endfor %}
+    <div class="gsc-menu" id="gsc-add-filter">
+      <button type="button" class="gsc-textbutton gsc-menu__trigger" aria-haspopup="menu" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+        <span>New</span>
+      </button>
+      <ul class="gsc-menu__list" role="menu" hidden>
+        {% for dim, label, ops in filter_dims %}<li role="none"><button type="button" role="menuitem" class="gsc-menu__item" data-open-filter="{{ dim }}">{{ label }}</button></li>{% endfor %}
+      </ul>
+    </div>
+    {% if active_filters or choices.range_key != "28d" or choices.compare != "previous" or choices.search_type != "web" %}
+    <a class="gsc-textbutton gsc-filters__reset" href="{{ reset_url }}">Reset filters</a>
+    {% endif %}
+  </nav>
+
+  {% if report_error %}
+  <section id="gsc-error" class="gsc-card gsc-notice gsc-notice--error" role="alert">
+    <h2 class="gsc-notice__title">Search Console did not answer</h2>
+    <p class="gsc-notice__text">{{ report_error }}</p>
+    <p class="gsc-notice__text">Reload to try again. If it keeps failing, check that the service account can still read <code>{{ rp.site }}</code>.</p>
+  </section>
+  {% else %}
+
+  {% for a in alerts %}
+  <section class="gsc-card gsc-notice{% if a.severe %} gsc-notice--error{% else %} gsc-notice--info{% endif %} gsc-alert" aria-label="Sudden change">
+    <svg class="gsc-notice__icon" viewBox="0 0 24 24" aria-hidden="true">{% if a.kind == "drop" %}<path d="M16 18l2.29-2.29-4.88-4.88-4 4L2 7.41 3.41 6l6 6 4-4 6.3 6.29L22 12v6z"/>{% else %}<path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/>{% endif %}</svg>
+    <p class="gsc-notice__text">{{ a.text }}</p>
+  </section>
+  {% endfor %}
+
+  <section id="gsc-performance" class="gsc-card gsc-performance" aria-label="Performance">
+    <div class="gsc-tiles" role="group" aria-label="Metrics on the chart">
+      {% for t in tiles %}
+      <button type="button" class="gsc-tile gsc-tile--{{ t.key }}" data-metric="{{ t.key }}" aria-pressed="{% if t.key == 'clicks' or t.key == 'impressions' %}true{% else %}false{% endif %}">
+        <span class="gsc-tile__label"><span class="gsc-tile__check" aria-hidden="true"></span>{{ t.label }}</span>
+        <span class="gsc-tile__value">{{ t.value }}</span>
+        {% if t.prev %}
+        <span class="gsc-tile__compare">
+          <span class="gsc-tile__prev">{{ t.prev }} before</span>
+          {% if t.change %}<span class="gsc-tile__change gsc-tile__change--{{ t.change.tone }}" title="{{ t.change.title }}">{{ t.change.text }}</span>{% endif %}
+        </span>
+        {% endif %}
+      </button>
+      {% endfor %}
+    </div>
+    <div class="gsc-chart" id="gsc-chart" data-chart="daily" role="img" aria-label="Daily {{ range_label|lower }}"></div>
+    <ol class="gsc-annotations" id="gsc-annotations" hidden></ol>
+  </section>
+
+  <section id="gsc-breakdown" class="gsc-card gsc-breakdown" aria-label="Breakdown">
+    <div class="gsc-tabs" role="tablist" data-tabs="breakdown">
+      <button type="button" role="tab" class="gsc-tab" data-tab="query" aria-selected="true">Queries</button>
+      <button type="button" role="tab" class="gsc-tab" data-tab="page" aria-selected="false">Pages</button>
+      <button type="button" role="tab" class="gsc-tab" data-tab="country" aria-selected="false">Countries</button>
+      <button type="button" role="tab" class="gsc-tab" data-tab="device" aria-selected="false">Devices</button>
+      {% if report.tables.appearance %}<button type="button" role="tab" class="gsc-tab" data-tab="appearance" aria-selected="false">Search appearance</button>{% endif %}
+      <button type="button" role="tab" class="gsc-tab" data-tab="date" aria-selected="false">Dates</button>
+    </div>
+    <div class="gsc-table-host" id="gsc-breakdown-table"></div>
+  </section>
+
+  <h2 class="gsc-group-title" id="gsc-insights-title">Beyond the Performance report</h2>
+
+  <section id="gsc-history" class="gsc-card" aria-labelledby="gsc-history-title">
+    <header class="gsc-card__head">
+      <h3 class="gsc-card__title" id="gsc-history-title">Last 16 months, week by week</h3>
+      <p class="gsc-card__sub">Clicks and impressions per week across everything Search Console keeps. Numbered marks are sudden breaks; a dashed end is a week not yet complete.</p>
+    </header>
+    <div class="gsc-chart gsc-chart--history" id="gsc-history-chart" data-chart="history" role="img" aria-label="Weekly clicks and impressions over 16 months"></div>
+    <ol class="gsc-annotations" id="gsc-history-events" hidden></ol>
+  </section>
+
+  <section id="gsc-opportunities" class="gsc-card" aria-labelledby="gsc-opportunities-title">
+    <header class="gsc-card__head">
+      <h3 class="gsc-card__title" id="gsc-opportunities-title">Opportunities</h3>
+      <p class="gsc-card__sub" data-tab-note>Queries that need at least {{ report.min_impressions }} impressions in the range.</p>
+    </header>
+    <div class="gsc-tabs" role="tablist" data-tabs="opportunities">
+      <button type="button" role="tab" class="gsc-tab" data-tab="striking" aria-selected="true">Striking distance <span class="gsc-tab__count">{{ report.opportunities.striking|length }}</span></button>
+      <button type="button" role="tab" class="gsc-tab" data-tab="low_ctr" aria-selected="false">Low click rate <span class="gsc-tab__count">{{ report.opportunities.low_ctr|length }}</span></button>
+      <button type="button" role="tab" class="gsc-tab" data-tab="cannibal" aria-selected="false">Competing pages <span class="gsc-tab__count">{{ report.opportunities.cannibal|length }}</span></button>
+      {% if report.compare.available %}
+      <button type="button" role="tab" class="gsc-tab" data-tab="new" aria-selected="false">New queries <span class="gsc-tab__count">{{ report.opportunities.new|length }}</span></button>
+      <button type="button" role="tab" class="gsc-tab" data-tab="lost" aria-selected="false">Lost queries <span class="gsc-tab__count">{{ report.opportunities.lost|length }}</span></button>
+      {% endif %}
+    </div>
+    <p class="gsc-tab-note" id="gsc-opportunities-note"></p>
+    <div class="gsc-table-host" id="gsc-opportunities-table"></div>
+  </section>
+
+  {% if report.compare.available %}
+  <section id="gsc-movers" class="gsc-card" aria-labelledby="gsc-movers-title">
+    <header class="gsc-card__head">
+      <h3 class="gsc-card__title" id="gsc-movers-title">Biggest changes in clicks</h3>
+      <p class="gsc-card__sub">{{ report.range.span }} against {{ report.compare.span }}.</p>
+    </header>
+    <div class="gsc-tabs" role="tablist" data-tabs="movers">
+      <button type="button" role="tab" class="gsc-tab" data-tab="query" aria-selected="true">Queries</button>
+      <button type="button" role="tab" class="gsc-tab" data-tab="page" aria-selected="false">Pages</button>
+    </div>
+    <div class="gsc-movers" id="gsc-movers-body">
+      <div class="gsc-movers__side"><h4 class="gsc-movers__title gsc-movers__title--up">Gaining</h4><div class="gsc-table-host" id="gsc-movers-up"></div></div>
+      <div class="gsc-movers__side"><h4 class="gsc-movers__title gsc-movers__title--down">Declining</h4><div class="gsc-table-host" id="gsc-movers-down"></div></div>
+    </div>
+  </section>
+  {% endif %}
+
+  <div class="gsc-grid">
+    <section id="gsc-brand" class="gsc-card" aria-labelledby="gsc-brand-title">
+      <header class="gsc-card__head">
+        <h3 class="gsc-card__title" id="gsc-brand-title">Brand and non-brand</h3>
+        <p class="gsc-card__sub">{% if report.brand %}Branded means the query names {{ report.brand.names|join:" or " }}. Hidden is traffic from rare queries Google keeps out of every query table.{% else %}No brand names are set for this property.{% endif %}</p>
+      </header>
+      {% if report.brand %}
+      <div class="gsc-split">
+        <div class="gsc-split__row">
+          <p class="gsc-split__label">Clicks</p>
+          <div class="gsc-stack" role="img" aria-label="Share of clicks">{% for r in report.brand.rows %}<span class="gsc-stack__part gsc-stack__part--{{ r.key }}" data-share="{{ r.clicks_pct }}"></span>{% endfor %}</div>
+        </div>
+        <div class="gsc-split__row">
+          <p class="gsc-split__label">Impressions</p>
+          <div class="gsc-stack" role="img" aria-label="Share of impressions">{% for r in report.brand.rows %}<span class="gsc-stack__part gsc-stack__part--{{ r.key }}" data-share="{{ r.impressions_pct }}"></span>{% endfor %}</div>
+        </div>
+      </div>
+      <div class="gsc-table-scroll">
+      <table class="gsc-table gsc-table--compact">
+        <thead><tr><th class="gsc-table__name" scope="col">Traffic</th><th scope="col">Clicks</th><th scope="col">Share</th><th scope="col">Impressions</th><th scope="col">Share</th></tr></thead>
+        <tbody>
+          {% for r in report.brand.rows %}
+          <tr>
+            <th class="gsc-table__name" scope="row"><span class="gsc-key gsc-key--{{ r.key }}"></span>{{ r.label }}</th>
+            <td data-num="{{ r.clicks }}">{{ r.clicks }}</td><td>{{ r.clicks_pct }}%</td>
+            <td data-num="{{ r.impressions }}">{{ r.impressions }}</td><td>{{ r.impressions_pct }}%</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% endif %}
+    </section>
+
+    <section id="gsc-ranking" class="gsc-card" aria-labelledby="gsc-ranking-title">
+      <header class="gsc-card__head">
+        <h3 class="gsc-card__title" id="gsc-ranking-title">Where the property ranks</h3>
+        <p class="gsc-card__sub">Over the queries Google lists: {{ report.coverage.impressions_pct|default:"0" }}% of impressions.</p>
+      </header>
+      <div class="gsc-bars" id="gsc-bands" aria-label="Impressions by position">
+        {% for b in report.bands %}
+        <div class="gsc-bars__row">
+          <p class="gsc-bars__label"><span class="gsc-bars__name">Position {{ b.label }}</span><span class="gsc-bars__hint">{{ b.blurb }}</span></p>
+          <div class="gsc-bars__track"><span class="gsc-bars__fill" data-share="{{ b.impressions_pct }}"></span></div>
+          <p class="gsc-bars__value">{{ b.impressions_pct }}% <span class="gsc-bars__hint">{{ b.queries }} queries</span></p>
+        </div>
+        {% endfor %}
+      </div>
+      <h4 class="gsc-subtitle">Click rate by position</h4>
+      <div class="gsc-bars gsc-bars--ctr" id="gsc-ctr-curve">
+        {% for c in report.ctr_curve %}
+        <div class="gsc-bars__row{% if c.small %} gsc-bars__row--small{% endif %}">
+          <p class="gsc-bars__label"><span class="gsc-bars__name">{{ c.bucket }}</span></p>
+          <div class="gsc-bars__track"><span class="gsc-bars__fill gsc-bars__fill--ctr" data-ctr="{{ c.ctr }}"></span></div>
+          <p class="gsc-bars__value">{{ c.ctr }}% <span class="gsc-bars__hint">{% if c.small %}only {{ c.impressions }} impressions{% else %}{{ c.impressions }} impressions{% endif %}</span></p>
+        </div>
+        {% empty %}<p class="gsc-empty">No query has impressions in this range.</p>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+
+  <section id="gsc-sections" class="gsc-card" aria-labelledby="gsc-sections-title">
+    <header class="gsc-card__head">
+      <h3 class="gsc-card__title" id="gsc-sections-title">Site sections</h3>
+      <p class="gsc-card__sub">Pages grouped by their first folder, or by the folder after the language folder (/en/brokers).</p>
+    </header>
+    <div class="gsc-table-host" id="gsc-sections-table"></div>
+  </section>
+
+  <section id="gsc-sitemaps" class="gsc-card" aria-labelledby="gsc-sitemaps-title">
+    <header class="gsc-card__head">
+      <h3 class="gsc-card__title" id="gsc-sitemaps-title">Sitemaps</h3>
+      <p class="gsc-card__sub">What the property has submitted, and when Google last read it.</p>
+    </header>
+    {% if report.sitemaps %}
+    <div class="gsc-table-scroll">
+      <table class="gsc-table">
+        <thead><tr><th class="gsc-table__name" scope="col">Sitemap</th><th scope="col">Type</th><th scope="col">Submitted</th><th scope="col">Last read</th><th scope="col">Status</th><th scope="col">Discovered URLs</th></tr></thead>
+        <tbody>
+          {% for s in report.sitemaps %}
+          <tr>
+            <th class="gsc-table__name" scope="row"><span class="gsc-url">{{ s.path }}</span></th>
+            <td>{% if s.index %}Sitemap index{% else %}Sitemap{% endif %}</td>
+            <td>{{ s.submitted_at|default:"-" }}</td>
+            <td>{{ s.read_at|default:"-" }}</td>
+            <td><span class="gsc-status {% if s.errors %}gsc-status--error{% elif s.pending %}gsc-status--wait{% elif s.warnings %}gsc-status--warn{% else %}gsc-status--ok{% endif %}">{% if s.errors %}{{ s.errors }} errors{% elif s.pending %}Pending{% elif s.warnings %}{{ s.warnings }} warnings{% else %}Success{% endif %}</span></td>
+            <td data-num="{{ s.urls }}">{{ s.urls }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% elif report.sitemaps is None %}
+    <p class="gsc-empty">Google did not answer the sitemaps request.</p>
+    {% else %}
+    <p class="gsc-empty">No sitemap has been submitted for this property.</p>
+    {% endif %}
+  </section>
+
+  <section id="gsc-notes" class="gsc-card" aria-labelledby="gsc-notes-title">
+    <header class="gsc-card__head"><h3 class="gsc-card__title" id="gsc-notes-title">About this data</h3></header>
+    <ul class="gsc-notes">{% for n in notes %}<li class="gsc-notes__item">{{ n }}</li>{% endfor %}</ul>
+    <p class="gsc-notes__meta">Read live from the Search Console API in {{ report.fetch_seconds }} s, kept for up to six hours.</p>
+  </section>
+  {% endif %}
+
+  {% comment %} Dialogs: the date range and comparison, the search type, one filter. {% endcomment %}
+  <dialog id="gsc-date-dialog" class="gsc-dialog" aria-labelledby="gsc-date-dialog-title">
+    <form method="dialog" class="gsc-dialog__form" data-apply="date">
+      <h2 class="gsc-dialog__title" id="gsc-date-dialog-title">Date range</h2>
+      <div class="gsc-tabs gsc-tabs--dialog" role="tablist" data-tabs="date-dialog">
+        <button type="button" role="tab" class="gsc-tab" data-tab="filter" aria-selected="true">Filter</button>
+        <button type="button" role="tab" class="gsc-tab" data-tab="compare" aria-selected="false">Compare</button>
+      </div>
+      <fieldset class="gsc-dialog__panel" data-panel="filter">
+        <legend class="gsc-visually-hidden">Range</legend>
+        {% for key, label in ranges %}
+        <label class="gsc-radio"><input type="radio" name="range" value="{{ key }}"{% if choices.range_key == key %} checked{% endif %}><span>{{ label }}</span></label>
+        {% endfor %}
+        <label class="gsc-radio"><input type="radio" name="range" value="custom"{% if choices.range_key == "custom" %} checked{% endif %}><span>Custom</span></label>
+        <div class="gsc-dialog__dates">
+          <label class="gsc-field"><span class="gsc-field__label">Start date</span><input class="gsc-field__input" type="date" name="start" value="{{ report.range.start|default:'' }}" max="{{ report.last_complete|default:'' }}"></label>
+          <label class="gsc-field"><span class="gsc-field__label">End date</span><input class="gsc-field__input" type="date" name="end" value="{{ report.range.end|default:'' }}" max="{{ report.last_complete|default:'' }}"></label>
+        </div>
+      </fieldset>
+      <fieldset class="gsc-dialog__panel" data-panel="compare" hidden>
+        <legend class="gsc-visually-hidden">Compare</legend>
+        {% for key, label in compares %}
+        <label class="gsc-radio"><input type="radio" name="compare" value="{{ key }}"{% if choices.compare == key %} checked{% endif %}><span>{{ label }}</span></label>
+        {% endfor %}
+      </fieldset>
+      <footer class="gsc-dialog__actions">
+        <button type="button" class="gsc-textbutton" data-close-dialog>Cancel</button>
+        <button type="submit" class="gsc-textbutton gsc-textbutton--primary">Apply</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="gsc-type-dialog" class="gsc-dialog" aria-labelledby="gsc-type-dialog-title">
+    <form method="dialog" class="gsc-dialog__form" data-apply="type">
+      <h2 class="gsc-dialog__title" id="gsc-type-dialog-title">Search type</h2>
+      <fieldset class="gsc-dialog__panel">
+        <legend class="gsc-visually-hidden">Search type</legend>
+        {% for key, label in search_types %}
+        <label class="gsc-radio"><input type="radio" name="type" value="{{ key }}"{% if choices.search_type == key %} checked{% endif %}><span>{{ label }}</span></label>
+        {% endfor %}
+      </fieldset>
+      <footer class="gsc-dialog__actions">
+        <button type="button" class="gsc-textbutton" data-close-dialog>Cancel</button>
+        <button type="submit" class="gsc-textbutton gsc-textbutton--primary">Apply</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="gsc-filter-dialog" class="gsc-dialog" aria-labelledby="gsc-filter-dialog-title">
+    <form method="dialog" class="gsc-dialog__form" data-apply="filter">
+      <h2 class="gsc-dialog__title" id="gsc-filter-dialog-title">Filter</h2>
+      <input type="hidden" name="dim" value="">
+      <label class="gsc-field"><span class="gsc-field__label">Condition</span>
+        <select class="gsc-field__input" name="op">
+          {% for op, label in operator_labels.items %}<option value="{{ op }}">{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="gsc-field" data-field="text"><span class="gsc-field__label">Value</span><input class="gsc-field__input" type="text" name="value" autocomplete="off"></label>
+      <label class="gsc-field" data-field="country" hidden><span class="gsc-field__label">Country</span><select class="gsc-field__input" name="country_value"></select></label>
+      <label class="gsc-field" data-field="device" hidden><span class="gsc-field__label">Device</span>
+        <select class="gsc-field__input" name="device_value">{% for d in devices %}<option value="{{ d }}">{{ d|lower|capfirst }}</option>{% endfor %}</select>
+      </label>
+      <footer class="gsc-dialog__actions">
+        <button type="button" class="gsc-textbutton" data-close-dialog>Cancel</button>
+        <button type="submit" class="gsc-textbutton gsc-textbutton--primary">Apply</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div class="gsc-tooltip" id="gsc-tooltip" role="tooltip" hidden></div>
+</div>
+{{ report|json_script:"gsc-report-data" }}
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'keel_seo/gsc/report.js' %}" defer></script>
+{% endblock %}
