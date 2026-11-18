@@ -469,6 +469,7 @@ class Audit:
     def architecture(self) -> dict:
         rows = [row for row in self.rows.values() if row["indexable"]]
         orphans = [row for row in rows if not row["inlinks"]]
+        unreachable = [row for row in rows if row["depth"] < 0]
         chrome_only = [row for row in rows if row["inlinks"] and not row["inlinks_content"]]
         anchors: dict = defaultdict(lambda: defaultdict(int))
         generic = total = nofollow = 0
@@ -502,14 +503,23 @@ class Audit:
         money = [path.rstrip("/") for path in self.project.get("business", {}).get("money_pages", [])]
         by_rank = sorted(rows, key=lambda row: -row["pagerank"])
         return {
-            "depth_distribution": dict(sorted(Counter(row["depth"] for row in rows).items())),
-            "depth_note": "depth -1 means no crawled page links to it (reachable from a sitemap only).",
+            "depth_distribution": dict(sorted(Counter(
+                "unreachable" if row["depth"] < 0 else "7 or more" if row["depth"] >= 7 else str(row["depth"])
+                for row in rows).items())),
+            "depth_note": "Clicks from the homepage through any link. Unreachable means no chain of links from "
+                          "the homepage leads to the page, even if other unreachable pages link to it.",
+            "unreachable_from_home": {
+                "count": len(unreachable), "by_family": dict(Counter(row["family"] for row in unreachable)),
+                "top": [self.brief(row, "inlinks") for row in sorted(unreachable, key=lambda row: -row["impr_16m"])[:30]]},
+            "deepest_chains": [self.brief(row, "depth") for row in sorted(rows, key=lambda row: -row["depth"])[:5]],
             "orphans": {"count": len(orphans), "by_family": dict(Counter(row["family"] for row in orphans)),
                         "top": [self.brief(row) for row in sorted(orphans, key=lambda row: -row["impr_16m"])[:40]]},
             "linked_only_from_navigation_or_footer": {
                 "count": len(chrome_only), "by_family": dict(Counter(row["family"] for row in chrome_only))},
             "deep_pages": {"depth_5_or_more": sum(1 for row in rows if row["depth"] >= 5),
-                           "by_family": dict(Counter(row["family"] for row in rows if row["depth"] >= 5))},
+                           "by_family": dict(Counter(row["family"] for row in rows if row["depth"] >= 5)),
+                           "note": "A long tail of depths usually means pages reached only through a chain of "
+                                   "next and previous links."},
             "content_inlinks_by_family": {name: {"median": _median(row["inlinks_content"] for row in family if row["indexable"]),
                                                  "zero": sum(1 for row in family if row["indexable"] and not row["inlinks_content"])}
                                           for name, family in self.by_family.items()},
