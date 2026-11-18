@@ -13,6 +13,7 @@ python -m keel_seo.audit init <workspace>        # starter project.json
 python -m keel_seo.audit gsc <workspace>         # Search Console: six spans, query by page, 16 months
 python -m keel_seo.audit crawl <workspace>       # sitemaps, links and Search Console URLs, through the proxy pool
 python -m keel_seo.audit build <workspace>       # page families, the inventory table, every fact file
+python -m keel_seo.audit build <workspace> --only intent,competitor   # refresh fact files, inventory untouched
 python -m keel_seo.audit psi <workspace>         # PageSpeed for one page per family
 python -m keel_seo.audit serp-plan <workspace>   # the queries worth a result lookup
 python -m keel_seo.audit facts <workspace> <module | overview>

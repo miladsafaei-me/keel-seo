@@ -277,6 +277,13 @@ class Audit:
         for row in self.rows.values():
             self.by_family[row["family"]].append(row)
 
+    def read_inventory(self) -> None:
+        """Reuse the inventory table of an earlier build instead of rebuilding it."""
+        self.rows = {row["url"]: dict(row) for row in self.conn.execute("SELECT * FROM inventory")}
+        self.by_family = defaultdict(list)
+        for row in self.rows.values():
+            self.by_family[row["family"]].append(row)
+
     def brief(self, row: dict, *extra: str) -> dict:
         keys = ("url", "family", "words", "inlinks_content", "clicks_3m", "impr_3m", "pos_3m",
                 "clicks_16m", "impr_16m", *extra)
@@ -1034,20 +1041,31 @@ class Audit:
         }
 
 
-def run(workspace: Workspace) -> dict:
+def run(workspace: Workspace, only: tuple = ()) -> dict:
+    """Build everything, or with ``only`` refresh the named fact files.
+
+    A partial build leaves the inventory table alone, so it is safe while
+    agents are reading it: use it when SERP snapshots arrive after the build.
+    """
     audit = Audit(workspace)
     audit.load()
     if not audit.pages:
         raise SystemExit("no crawled pages yet. Run the crawl command first.")
-    audit.build_inventory()
+    if only:
+        audit.read_inventory()
+    else:
+        audit.build_inventory()
     written = {}
     for name, builder in (
             ("overview", audit.overview), ("technical", audit.technical), ("architecture", audit.architecture),
             ("inventory", audit.inventory_facts), ("cannibalization", audit.cannibalization),
             ("scaled", audit.scaled), ("intent", audit.intent), ("structure", audit.structure),
             ("snippet", audit.snippet), ("performance", audit.performance), ("competitor", audit.competitor)):
+        if only and name not in only:
+            continue
         path = workspace.write_fact(name, builder())
         written[name] = f"{path.stat().st_size // 1024} KB"
-    set_meta(audit.conn, "built", written)
+    if not only:
+        set_meta(audit.conn, "built", written)
     audit.conn.close()
     return {"pages": len(audit.rows), "families": len(audit.by_family), "facts": written}

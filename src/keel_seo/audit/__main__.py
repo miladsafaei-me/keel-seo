@@ -24,7 +24,8 @@ def main(argv=None) -> int:
     add("gsc", "pull Search Console data")
     psi = add("psi", "PageSpeed numbers for one sample page per family")
     psi.add_argument("--max", type=int, default=12)
-    add("build", "build families, the inventory and every candidate list")
+    build = add("build", "build families, the inventory and every candidate list")
+    build.add_argument("--only", default="", help="comma-separated fact files to refresh without rebuilding the inventory")
     facts = add("facts", "print a module's fact file, or one page's record")
     facts.add_argument("module", help="a module name, 'overview', 'family' or 'page'")
     facts.add_argument("target", nargs="?", default="", help="a URL for 'page', a family for 'family'")
@@ -57,7 +58,7 @@ def main(argv=None) -> int:
         result = psi_module.run(workspace, max_pages=args.max)
     elif args.command == "build":
         from . import analyze
-        result = analyze.run(workspace)
+        result = analyze.run(workspace, tuple(name for name in args.only.split(",") if name))
     elif args.command == "facts":
         from . import facts as facts_module
         result = facts_module.show(workspace, args.module, args.target, limit=args.limit)
