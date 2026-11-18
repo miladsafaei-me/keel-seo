@@ -75,7 +75,8 @@ def _require_site(site: str) -> str:
     return site
 
 
-def _load_service():
+def _load_service(credentials: "str | os.PathLike | None" = None):
+    """The Search Console client for ``credentials`` (a key path), else ``$GSC_CREDENTIALS``."""
     try:
         from google.oauth2 import service_account
         from googleapiclient.discovery import build
@@ -85,7 +86,7 @@ def _load_service():
             "  pip install 'keel-seo[gsc]'"
         )
 
-    path = _credentials_path()
+    path = Path(credentials).expanduser() if credentials else _credentials_path()
     if not path.exists():
         _fail(
             f"service-account key not found at {path}\n"

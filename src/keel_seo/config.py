@@ -94,6 +94,11 @@ key is optional and the defaults make the package work standalone:
         # preset key (7d/30d/60d/90d/full); "directory_series": False skips the
         # date x page pull, the slowest one on a large property. A key must not
         # match one of the dashboard's own action routes (dismiss, restore, queue).
+        # "credentials" names another service-account key for that one property, for
+        # a host that reads properties through more than one account. The whole value
+        # may instead be a callable, or the dotted path of one, returning this dict,
+        # for a host that discovers its properties at run time (it is called on every
+        # lookup, so it caches its own answer).
         "gsc_properties": {
             "kifpool": {"site": "https://kifpool.me/", "label": "Kifpool",
                         "default_window": "30d", "max_window": "90d",
@@ -217,10 +222,21 @@ def gsc_queue_list_url() -> str:
         return ""
 
 
+def gsc_properties() -> dict:
+    """Every declared ``gsc_properties`` entry, by key. The setting is a dict, or a
+    callable (or its dotted path) that returns one."""
+    raw = seo_setting("gsc_properties")
+    if isinstance(raw, str):
+        raw = import_string(raw)
+    if callable(raw):
+        raw = raw()
+    return dict(raw or {})
+
+
 def gsc_property(key):
     """One declared ``gsc_properties`` entry with its key filled in, or None when the
     key is not declared or names no site (the dashboard view answers that with 404)."""
-    entry = (seo_setting("gsc_properties") or {}).get(key)
+    entry = gsc_properties().get(key)
     if not entry or not entry.get("site"):
         return None
     return {"key": key, "label": key, **entry}

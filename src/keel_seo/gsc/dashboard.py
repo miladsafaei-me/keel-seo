@@ -661,10 +661,12 @@ def _resolve_payload(window=None, start=None, end=None, prop=None):
         try:
             from . import live as gsc_live
 
-            if gsc_live.live_enabled(site):
+            creds = prop.get("credentials") if prop else None
+            if gsc_live.live_enabled(site, creds):
                 data = gsc_live.build_range(
                     live_start, live_end, window=live_key, site=site,
                     directory_series=prop.get("directory_series", True) if prop else True,
+                    credentials=creds,
                 )
                 win_key = live_key
         except Exception:

@@ -52,12 +52,13 @@ def _creds_path() -> str:
     return os.environ.get("GSC_CREDENTIALS", "")
 
 
-def live_enabled(site: "str | None" = None) -> bool:
+def live_enabled(site: "str | None" = None, credentials: "str | None" = None) -> bool:
     """Live querying is on only when explicitly enabled AND the key is actually present.
-    A named ``site`` (a declared extra property) does not need ``$GSC_SITE``."""
+    A named ``site`` (a declared extra property) does not need ``$GSC_SITE``, and its
+    own ``credentials`` key replaces ``$GSC_CREDENTIALS``."""
     if os.environ.get("GSC_LIVE") != "1":
         return False
-    p = _creds_path()
+    p = str(credentials) if credentials else _creds_path()
     return bool(p) and Path(p).exists() and bool(site or os.environ.get("GSC_SITE"))
 
 
@@ -86,10 +87,10 @@ def _enrichment() -> dict:
     return _enrich_cache
 
 
-def _service():
+def _service(credentials: "str | None" = None):
     from . import connector as gsc
 
-    service, _ = gsc._load_service()
+    service, _ = gsc._load_service(credentials)
     return service
 
 
@@ -304,20 +305,21 @@ def _dir_daily_series(service, site: str, start: str, end: str, p_rows: list, ax
 
 
 def build_range(start: str, end: str, window: str = "custom", site: "str | None" = None,
-                directory_series: bool = True) -> dict:
+                directory_series: bool = True, credentials: "str | None" = None) -> dict:
     """A full dashboard payload for [start, end], computed live and cached per range.
 
     ``site`` defaults to ``$GSC_SITE``. Any other property skips the host's query
     enrichment map, which only describes the host's own queries, and
     ``directory_series=False`` skips the date x page pull behind the Performance
-    chart's directory filter, the slowest pull on a large property."""
+    chart's directory filter, the slowest pull on a large property. ``credentials`` is
+    the key path of a property read through another service account."""
     site = site or os.environ["GSC_SITE"]
     ckey = f"gscdash:{CACHE_VER}:{site}:{start}:{end}" + ("" if directory_series else ":nodirs")
     hit = cache.get(ckey)
     if hit is not None:
         return hit
 
-    service = _service()
+    service = _service(credentials)
     q_rows = _pull(service, site, start, end, ["query"])
     p_rows = _pull(service, site, start, end, ["page"])
     qp_rows = _pull(service, site, start, end, ["page", "query"])

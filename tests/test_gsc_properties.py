@@ -131,3 +131,34 @@ class DirectoryFilterTests(SimpleTestCase):
         self.assertTrue(home.search("https://kifpool.me/"))
         self.assertTrue(home.search("https://kifpool.me"))
         self.assertFalse(home.search("https://kifpool.me/live"))
+
+
+def discovered_properties():
+    """A host hook that finds its properties at run time (KEEL_SEO["gsc_properties"])."""
+    return {"wiki": {"site": "sc-domain:wiki.example", "label": "Wiki", "credentials": "/keys/second.json"}}
+
+
+@override_settings(KEEL_SEO={"gsc_properties": "tests.test_gsc_properties.discovered_properties"})
+class PropertyHookTests(SimpleTestCase):
+    def test_a_dotted_path_is_called_for_the_properties(self):
+        self.assertEqual(config.gsc_property("wiki")["site"], "sc-domain:wiki.example")
+        self.assertIsNone(config.gsc_property("kifpool"))
+
+    def test_a_callable_works_as_well(self):
+        with override_settings(KEEL_SEO={"gsc_properties": discovered_properties}):
+            self.assertEqual(list(config.gsc_properties()), ["wiki"])
+
+    def test_a_property_pulls_with_its_own_key(self):
+        payload = {"meta": {"window": "28d"}, "totals": {"clicks": 1}}
+        with mock.patch("keel_seo.gsc.live.live_enabled", return_value=True) as enabled, \
+                mock.patch("keel_seo.gsc.live.build_range", return_value=payload) as build_range:
+            dashboard.build_context(prop=config.gsc_property("wiki"))
+        self.assertEqual(enabled.call_args.args, ("sc-domain:wiki.example", "/keys/second.json"))
+        self.assertEqual(build_range.call_args.kwargs["credentials"], "/keys/second.json")
+
+    def test_live_needs_the_property_key_on_disk(self):
+        from keel_seo.gsc import live
+
+        with mock.patch.dict("os.environ", {"GSC_LIVE": "1", "GSC_CREDENTIALS": ""}):
+            self.assertFalse(live.live_enabled("sc-domain:wiki.example", "/no/such/key.json"))
+            self.assertTrue(live.live_enabled("sc-domain:wiki.example", __file__))
