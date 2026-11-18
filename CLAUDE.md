@@ -61,7 +61,7 @@ Remaining and follow-up work for this project is tracked in [TODO.md](TODO.md), 
   `indexing` for the Indexing API, `sitemaps`, `sites`, `check` for the preflight, the
   `UrlInspection` + `IndexingSubmission` state store, and the four
   `keel_seo_gsc_*` management commands), and (since v0.4.0) the `/search-console`
-  dashboard UI. Since v0.45.0 that is **the Search Console report**
+  dashboard UI. Since v0.46.0 that is **the Search Console report**
   (`gsc/report.py` pure transforms, `gsc/report_api.py` fetch, cache and assembly,
   `templates/keel_seo/gsc/report.html`, `static/keel_seo/gsc/report.{css,js}`): one
   structure for every property, in Search Console's own look. Never add a panel,

@@ -472,7 +472,7 @@ python -m keel_seo.gsc sites add sc-domain:example.com
 `add` registers a property; it does not **verify** it. Verification has no public API
 and stays a one-time browser step per property.
 
-### The Search Console report (`keel_seo.gsc.report` / `.report_api`, since v0.45.0)
+### The Search Console report (`keel_seo.gsc.report` / `.report_api`, since v0.46.0)
 
 `<mount>` and `<mount>/<property>` serve one report, the same for every property
 whatever its size, owner or permission level. It follows Search Console's own

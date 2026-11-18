@@ -30,7 +30,7 @@ Guidelines:
 ## P2 — Backlog
 
 - [ ] **Move the classic dashboard's host workflows onto the report, then delete it.**
-  Since v0.45.0 every property gets the one report (`gsc/report*.py`, `report.html`);
+  Since v0.46.0 every property gets the one report (`gsc/report*.py`, `report.html`);
   the old snapshot-and-insights page (`gsc/{build,live,dashboard}.py`,
   `search_console.html`, `search_console.{css,js}`) is served only when a host sets
   `KEEL_SEO["gsc_dashboard"] = "classic"`. What it still has that the report lacks:
