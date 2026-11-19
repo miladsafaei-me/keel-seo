@@ -70,18 +70,23 @@ def _zone(element) -> str:
     return "body"
 
 
-def _flatten_schema(node, found: list) -> None:
+def _flatten_schema(node, found: list, top: bool = True) -> None:
+    """Every typed node, each with a flag saying whether it is a top-level node of its block.
+
+    A nested node (an Organization listed inside an ItemList, the publisher of a Review)
+    describes another entity, so only top-level nodes are held to the recommended properties.
+    """
     if isinstance(node, list):
         for item in node:
-            _flatten_schema(item, found)
+            _flatten_schema(item, found, top)
     elif isinstance(node, dict):
         if "@graph" in node:
-            _flatten_schema(node["@graph"], found)
+            _flatten_schema(node["@graph"], found, top)
         if "@type" in node:
-            found.append(node)
+            found.append((node, top))
         for key, value in node.items():
             if key != "@graph" and isinstance(value, (dict, list)):
-                _flatten_schema(value, found)
+                _flatten_schema(value, found, False)
 
 
 def _schema(tree) -> tuple[list, list, dict]:
@@ -100,7 +105,7 @@ def _schema(tree) -> tuple[list, list, dict]:
             continue
         nodes: list = []
         _flatten_schema(data, nodes)
-        for node in nodes:
+        for node, top in nodes:
             kinds = node["@type"] if isinstance(node["@type"], list) else [node["@type"]]
             for kind in kinds:
                 if not isinstance(kind, str):
@@ -109,7 +114,7 @@ def _schema(tree) -> tuple[list, list, dict]:
                 for prop in SCHEMA_REQUIRED.get(kind, ()):
                     if not node.get(prop):
                         issues.append(f"{kind}: required property {prop} is missing")
-                for prop in SCHEMA_RECOMMENDED.get(kind, ()):
+                for prop in SCHEMA_RECOMMENDED.get(kind, ()) if top else ():
                     if not node.get(prop):
                         issues.append(f"{kind}: recommended property {prop} is missing")
                 if kind in ("Article", "NewsArticle", "BlogPosting", "Review") and not article:

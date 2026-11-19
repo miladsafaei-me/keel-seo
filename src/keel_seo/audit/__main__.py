@@ -35,6 +35,7 @@ def main(argv=None) -> int:
     event = add("event", "measure a dated step change: the days before against the days after")
     event.add_argument("date", help="the day the line broke, YYYY-MM-DD")
     event.add_argument("--days", type=int, default=14)
+    add("social", "find the brand's social profiles and read what each shows in public")
     add("report-data", "write every number the report shows into report/data.json")
     findings = add("findings", "validate agent findings and reconcile them per URL")
     findings.add_argument("action", choices=("validate", "reconcile", "export"))
@@ -69,6 +70,9 @@ def main(argv=None) -> int:
     elif args.command == "event":
         from . import event as event_module
         result = event_module.run(workspace, args.date, days=args.days)
+    elif args.command == "social":
+        from . import social as social_module
+        result = social_module.run(workspace)
     elif args.command == "report-data":
         from . import reportdata
         result = reportdata.run(workspace)

@@ -155,3 +155,32 @@ class ReportDataTests(unittest.TestCase):
         demand = reportdata._demand(urls)
         self.assertEqual(demand["a-01"], {"impressions_3m": 10, "clicks_3m": 1, "urls_with_impressions": 1})
         self.assertEqual(demand["b-02"]["impressions_3m"], 10)
+
+
+class SocialTests(unittest.TestCase):
+    def test_numbers_identity_and_months(self):
+        from datetime import date
+        from keel_seo.audit import social
+        self.assertEqual(social.number("1,234"), 1234)
+        self.assertEqual(social.number("1.2K"), 1200)
+        self.assertEqual(social.platform_of("https://hk.linkedin.com/company/x"), "linkedin")
+        self.assertEqual(social.platform_of("https://wikilix.com/en"), "")
+        self.assertFalse(social._identity("Mark Someone", "https://facebook.com/acme", ["acme"]))
+        self.assertTrue(social._identity("", "https://x.com/acmeglobal", ["acme"]))
+        profile = {"status": "measured", "recent": [{"date": "2026-09-30", "likes": 2, "comments": 0, "views": None,
+                                                      "links_to_site": True}]}
+        summary = social.summarize(profile, date(2026, 11, 19))
+        self.assertEqual(list(summary["posts_by_month"]), ["2026-06", "2026-07", "2026-08", "2026-09", "2026-10", "2026-11"])
+        self.assertEqual(summary["posts_by_month"]["2026-09"], 1)
+        self.assertEqual(summary["posts_91d"], 1)
+
+
+class SchemaTests(unittest.TestCase):
+    def test_nested_organization_is_not_held_to_recommended(self):
+        from lxml import html as lxml_html
+        from keel_seo.audit import parse
+        block = ('{"@context":"https://schema.org","@graph":[{"@type":"Organization","name":"Own","url":"u","logo":"l",'
+                 '"sameAs":["s"]},{"@type":"ItemList","itemListElement":[{"@type":"Organization","name":"Other"}]}]}')
+        tree = lxml_html.fromstring(f'<html><head><script type="application/ld+json">{block}</script></head><body></body></html>')
+        _types, issues, _article = parse._schema(tree)
+        self.assertEqual(issues, [])

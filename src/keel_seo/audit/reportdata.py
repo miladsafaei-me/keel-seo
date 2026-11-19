@@ -181,6 +181,19 @@ def _serp_holders(workspace: Workspace, site: str, limit: int = 10) -> dict:
             "domains": [{"domain": domain, "queries": count} for domain, count in counts.most_common(limit + 1) if domain != own][:limit]}
 
 
+def _social(workspace: Workspace) -> dict:
+    """The social facts as the report shows them; empty when the social command has not run."""
+    path = workspace.facts / "social.json"
+    if not path.exists():
+        return {}
+    facts = json.loads(path.read_text(encoding="utf-8"))
+    keys = ("platform", "url", "found_in", "status", "name", "identity_match", "followers", "following", "posts_total",
+            "joined", "links_to_site", "note", "summary")
+    return {"read_on": facts["read_on"], "same_as": facts["same_as"], "site_links": facts["site_links"],
+            "scripted_only": facts.get("scripted_only", []),
+            "profiles": [{key: profile.get(key) for key in keys} for profile in facts["profiles"]]}
+
+
 def run(workspace: Workspace) -> dict:
     facts = {name: json.loads((workspace.facts / f"{name}.json").read_text(encoding="utf-8"))
              for name in ("overview", "technical", "performance")}
@@ -245,6 +258,7 @@ def run(workspace: Workspace) -> dict:
         "growth": {"queries": _queries(conn, [term.lower() for term in overview["project"].get("brand_terms", [])]),
                    "near_page_one": _near_page_one(conn, [term.lower() for term in overview["project"].get("brand_terms", [])]),
                    "serp_holders": _serp_holders(workspace, overview["project"]["site"])},
+        "social": _social(workspace),
         "data_gaps": overview["data_gaps"],
     }
     conn.close()

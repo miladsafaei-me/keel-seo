@@ -24,6 +24,7 @@ python -m keel_seo.audit findings <workspace> validate [module]
 python -m keel_seo.audit findings <workspace> reconcile
 python -m keel_seo.audit findings <workspace> export
 python -m keel_seo.audit event <workspace> <YYYY-MM-DD>   # a dated break: 14 days before against 14 after
+python -m keel_seo.audit social <workspace>               # the brand's social profiles, read in public (needs Playwright)
 python -m keel_seo.audit report-data <workspace>          # every number the report shows: checklist statuses, weekly line, brand split, demand by position, queries near page one, result holders
 ```
 
@@ -37,6 +38,7 @@ python -m keel_seo.audit report-data <workspace>          # every number the rep
 | `facts.py` | Narrow reads for an agent: a fact file, one page, one family, or one read-only SELECT with a row cap. |
 | `findings.py` | Validates an agent's findings file, resolves its targets (URL list, family with a filter, or the site), applies the verifier's verdicts and the strategist's decisions (a new action, or a severity weighed against the site's size), leaves one action per URL, and lists conflicts and risky removals. Exports CSV and a workbook. |
 | `psi.py` | Field and lab numbers from Google's PageSpeed API for the top page of each family. |
+| `social.py` | Finds the brand's profiles (top-level JSON-LD `sameAs`, homepage links after rendering, `social_profiles` on the card) and reads each as a logged-out visitor: followers, posts, the dates and reactions of recent posts, whether the profile shows the brand's name and links to the site. YouTube by its feed, Telegram by its public preview, the rest in a headless browser; a login wall is recorded, never guessed. Also lists profile URLs the homepage reaches only through a script, which search engines do not follow. Writes `facts/social.json`. |
 
 ## The workspace
 

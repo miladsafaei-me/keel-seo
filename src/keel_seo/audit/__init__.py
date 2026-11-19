@@ -17,6 +17,7 @@ A run lives in one workspace folder (``project.json`` plus ``data/``,
     build      page families, the one-row-per-URL inventory, every candidate list
     facts      print one module's fact file, or one page's full record
     serp-plan  the priority queries a SERP collector should look up
+    social     the brand's social profiles: what the site declares and what each shows in public
     findings   validate agent findings, reconcile them to one verdict per URL
 
 See README.md in this folder for the workspace contract and the finding schema.
@@ -37,4 +38,5 @@ MODULES = (
     "snippet",
     "performance",
     "competitor",
+    "social",
 )
